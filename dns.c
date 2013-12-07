@@ -162,11 +162,14 @@ request_free(req)
 address_t	*addr;
 
 	free(req->dr_name);
-	while (addr = SIMPLEQ_FIRST(req->dr_result)) {
-		SIMPLEQ_REMOVE_HEAD(req->dr_result, ad_list);
-		free(addr);
+
+	if (req->dr_result) {
+		while (addr = SIMPLEQ_FIRST(req->dr_result)) {
+			SIMPLEQ_REMOVE_HEAD(req->dr_result, ad_list);
+			free(addr);
+		}
+		free(req->dr_result);
 	}
-	free(req->dr_result);
 	str_free(req->dr_tcpdata);
 	free(req);
 }
@@ -661,8 +664,11 @@ address_t		*addr;
 	if (SIMPLEQ_EMPTY(req->dr_result)) {
 		req->dr_fn(req->dr_name, DNS_ERR_NODATA, NULL, req->dr_udata);
 		free(req->dr_result);
-	} else
+		req->dr_result = NULL;
+	} else {
 		req->dr_fn(req->dr_name, 0, req->dr_result, req->dr_udata);
+		req->dr_result = NULL;
+	}
 	free(req->dr_name);
 	free(req);
 }
@@ -848,6 +854,7 @@ ssize_t		 n;
 			}
 
 			req->dr_fn(req->dr_name, 0, req->dr_result, req->dr_udata);
+			req->dr_result = NULL;
 			request_free(req);
 		}
 	}
