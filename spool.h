@@ -45,6 +45,11 @@ void	spool_close(void);
 int	spool_store(struct article *);
 
 /*
+ * Check the spool files for consistency.
+ */
+int	spool_check(void);
+
+/*
  * Fetch an article from the spool.
  */
 struct article	*spool_fetch(spool_id_t, spool_offset_t);

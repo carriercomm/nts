@@ -1,5 +1,5 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
-/* 
+/*
  * Copyright (c) 2011 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
@@ -74,6 +74,7 @@ uint64_t	 worker_threads = 0;
 
 static int	 start_reader_helper(void);
 static char	*get_uptime(void);
+static void	 usage(char const *);
 
 static config_schema_opt_t server_opts[] = {
 	{ "contact",		OPT_TYPE_STRING,
@@ -136,6 +137,23 @@ static void	 ctl_do_balloc_stats(ctl_client_t *);
 
 static int	 execute_control_command(char const *);
 
+static void
+usage(pname)
+	char const	*pname;
+{
+	fprintf(stderr,
+"usage: %s [-Vny] [-x <command>] [-c <conffile>] [-p <pidfile>]\n"
+"\n"
+"    -h                 print this message\n"
+"    -V                 print version and exit\n"
+"    -n                 run in the foreground\n"
+"    -x <command>       send a control command to a running NTS\n"
+"    -p <pidfile>       specify the pid file location\n"
+"    -c <conffile>      specify the configuration file\n"
+"    -y                 check spool files and exit\n"
+, pname);
+}
+
 int
 main(argc, argv)
 	char	**argv;
@@ -143,7 +161,7 @@ main(argc, argv)
 char const	*conf_name = CONF_NAME;
 int		 c;
 FILE		*pidf = NULL;
-int		 nflag = 0;
+int		 nflag = 0, yflag = 0;
 char		*control_command = NULL;
 struct group	*grp = NULL;
 struct passwd	*pwd = NULL;
@@ -159,7 +177,7 @@ int		 devnull;
 	article_init();
 	cq_init();
 
-	while ((c = getopt(argc, argv, "Vc:p:nx:")) != -1) {
+	while ((c = getopt(argc, argv, "Vc:p:nx:y")) != -1) {
 		switch (c) {
 			case 'V':
 				printf("RT/NTS %s #%d\n", PACKAGE_VERSION,
@@ -189,7 +207,16 @@ int		 devnull;
 				control_command = optarg;
 				break;
 
+			case 'h':
+				usage(argv[0]);
+				return 0;
+
+			case 'y':
+				++yflag;
+				break;
+
 			default:
+				usage(argv[0]);
 				return 1;
 		}
 	}
@@ -217,6 +244,9 @@ int		 devnull;
 
 	if (control_command)
 		return execute_control_command(control_command);
+
+	if (yflag)
+		return spool_check();
 
 	if (reader_handler)
 		if ((reader_handoff_socket = start_reader_helper()) == -1)
@@ -270,7 +300,7 @@ int		 devnull;
 			panic("%s: %s", pid_file, strerror(errno));
 	}
 
-	/* 
+	/*
 	 * Put log_run last, so messages continue to go to stderr until
 	 * we're done starting.  client_run goes first, because we need
 	 * to set up listen sockets because switching uid.
@@ -512,7 +542,7 @@ int		 n;
 		ctl_printf(ctl, "\nAllocator:\n");
 		ctl_do_balloc_stats(ctl);
 #endif
-	} else 
+	} else
 		ctl_printf(ctl, "ERR Unknown control command\n");
 
 	str_free(cmd);

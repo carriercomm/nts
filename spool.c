@@ -293,8 +293,8 @@ unsigned long	 datalen;
 	if (spool_method == M_MMAP) {
 		bcopy(data, hdr + SPOOL_HDR_SIZE, datalen);
 		spool_write_eos(sf, sf->sf_size + datalen + SPOOL_HDR_SIZE);
-		ret = msync(hdr, SPOOL_HDR_SIZE + datalen, spool_do_sync 
-			    ? MS_SYNC : MS_ASYNC);
+		ret = msync(hdr, SPOOL_HDR_SIZE + datalen + SPOOL_HDR_SIZE,
+				spool_do_sync ? MS_SYNC : MS_ASYNC);
 	} else {
 	struct iovec	iov[3];
 	char		eos[4];
@@ -727,4 +727,150 @@ spool_get_cur_pos(pos)
 {
 	pos->sp_id = spool_base + spool_cur_file;
 	pos->sp_offset = spool_files[spool_cur_file].sf_size;
+}
+
+int
+spool_check()
+{
+DIR		*d;
+struct dirent	*de;
+int		 errors = 0;
+
+	printf("nts: checking spool files in \"%s\"...\n", spool_path);
+
+	if ((d = opendir(spool_path)) == NULL) {
+		printf("nts:    \"%s\": cannot open: %s\n", spool_path, strerror(errno));
+		return 1;
+	}
+
+	while (de = readdir(d)) {
+	char		path[PATH_MAX];
+	struct stat	sb;
+	int		fd;
+	char		szbuf[sizeof(uint64_t)];
+	uint64_t	spsz;
+	uint64_t	bread = 0;
+	uint64_t	rawbytes = 0, artbytes = 0;
+
+		if (*de->d_name == '.')
+			continue;
+
+		snprintf(path, sizeof(path), "%s/%s", spool_path, de->d_name);
+
+		if (stat(path, &sb) == -1) {
+			printf("nts:    \"%s\": cannot stat: %s\n",
+				path, strerror(errno));
+			++errors;
+			continue;
+		}
+
+		if ((fd = open(path, O_RDONLY)) == -1) {
+			printf("nts:    \"%s\": cannot open: %s\n",
+				path, strerror(errno));
+			++errors;
+			continue;
+		}
+
+		printf("\nnts:    checking \"%s\"\n", path);
+
+		if (read(fd, szbuf, sizeof(szbuf)) < sizeof(szbuf)) {
+			printf("nts:    \"%s\": cannot read header: %s\n",
+				path, strerror(errno));
+			++errors;
+			goto next;
+		}
+		bread += sizeof(szbuf);
+
+		spsz = int64get(szbuf);
+		if (spsz > sb.st_size) {
+			printf("nts:    \"%s\": size in header (%"PRIu64" bytes)"
+				" is larger than file size (%"PRIu64" bytes)\n",
+				path, spsz, sb.st_size);
+			++errors;
+		}
+
+		if (pread(fd, szbuf, 4, spsz) < 4) {
+			printf("nts:    \"%s\": short read on EOS header\n", path);
+			++errors;
+		}
+
+		if (int32get(szbuf) != SPOOL_MAGIC_EOS) {
+			printf("nts:    \"%s: no EOS header at end of file\n", path);
+			++errors;
+		}
+
+		for (;;) {
+		char		 hdrbuf[SPOOL_HDR_SIZE];
+		int		 hdrpos = 0;
+		spool_header_t	 hdr;
+		char		*atext;
+		uint64_t	 crc;
+			if (read(fd, hdrbuf, sizeof(hdrbuf)) < sizeof(hdrbuf)) {
+				printf("nts:    \"%s\": short read on header\n",
+					path);
+				++errors;
+				goto next;
+			}
+
+			hdr.sa_magic = int32get(hdrbuf + hdrpos);                              hdrpos += 4;
+			hdr.sa_len = int32get(hdrbuf + hdrpos);                                hdrpos += 4;
+			hdr.sa_hdr_len = int8get(hdrbuf + hdrpos);                             hdrpos += 1;
+			hdr.sa_flags = int32get(hdrbuf + hdrpos);                              hdrpos += 4;
+			hdr.sa_emp_score = ((double) int64get(hdrbuf + hdrpos)) / 1000;        hdrpos += 8;
+			hdr.sa_phl_score = ((double) int64get(hdrbuf + hdrpos)) / 1000;        hdrpos += 8;
+			hdr.sa_crc = int64get(hdrbuf + hdrpos);                                hdrpos += 8;
+			hdr.sa_text_len = int32get(hdrbuf + hdrpos);                           hdrpos += 4;
+
+			if (hdr.sa_magic == SPOOL_MAGIC_EOS)
+				goto next;
+
+			if (hdr.sa_magic != SPOOL_MAGIC) {
+				printf("nts:    \"%s\": bad magic\n",
+					path);
+				++errors;
+				goto next;
+			}
+
+			bread += sizeof(hdrbuf);
+
+			if (hdr.sa_len > (sb.st_size - bread)) {
+				printf("nts:    \"%s\": article extends past end of file\n",
+					path);
+				++errors;
+				goto next;
+			}
+
+			atext = malloc(hdr.sa_len);
+			if (read(fd, atext, hdr.sa_len) < hdr.sa_len) {
+				printf("nts:    \"%s\": short read on article text\n",
+					path);
+				++errors;
+				free(atext);
+				goto next;
+			}
+
+			crc = crc64(atext, hdr.sa_len);
+			if (crc != hdr.sa_crc) {
+				printf("nts:    \"%s\": header CRC (%"PRIx64") does not match "
+					"article (%"PRIx64")\n", path, crc, hdr.sa_crc);
+				++errors;
+				free(atext);
+				continue;
+			}
+
+			free(atext);
+
+			rawbytes += hdr.sa_len;
+			artbytes += hdr.sa_text_len;
+		}
+
+	next:
+		printf("nts:    \"%s\": %"PRIu64" bytes on disk, %"PRIu64" bytes uncompressed, "
+			"%.2fx ratio, %d error(s)\n", path, rawbytes, artbytes, (double)artbytes / rawbytes,
+			errors);
+		close(fd);
+	}
+
+	closedir(d);
+	return errors;
 }
