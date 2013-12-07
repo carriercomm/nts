@@ -59,6 +59,7 @@ dist:
 
 nts: $(OBJS) y.tab.o lex.yy.o vers.o
 	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) y.tab.o lex.yy.o vers.o -o nts $(LIBS)
+	echo `expr \`cat build\` + 1` > build
 
 install:
 	${INSTALL} -d ${sbindir}
@@ -70,8 +71,10 @@ install:
 			${sysconfdir}/nts.conf;		\
 	fi
 
-y.tab.c y.tab.h: parser.y
+y.tab.c: parser.y
 	$(YACC) -d parser.y
+
+y.tab.h: y.tab.c
 
 lex.yy.c: lexer.l
 	$(LEX) lexer.l
@@ -84,6 +87,9 @@ vers.o:	vers.c
 
 vers.c:	build vers.sh
 	sh vers.sh
+
+build:
+	echo 1 > build
 
 .c.o:
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
