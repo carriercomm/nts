@@ -13,3 +13,4 @@ vers.c
 build
 dbversion
 doconf
+autom4te.cache
