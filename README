@@ -11,6 +11,7 @@ RT/NTS requires the following software:
 * A reasonable modern Unix environment
 * Oracle Berkeley DB (http://www.oracle.com/technetwork/database/berkeleydb/overview/index.html)
 * libev (http://software.schmorp.de/pkg/libev.html)
+* zlib (http://www.zlib.net/)
 
 Building
 ========

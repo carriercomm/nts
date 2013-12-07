@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/nts.conf.example,v 1.15 2012/01/08 22:42:01 river Exp $ */
 
 /*
  * The name of this server; will be inserted into the Path: header for
@@ -265,6 +264,21 @@ spool {
 	 * The default is "mmap" on 64-bit platforms and "file" elsewhere.
 	 */
 	method:		mmap;
+
+	/*
+	 * Compress data in the spool using zlib.  Testing on a few typical
+	 * text articles shows that at level 6, around 40-50% decrease in
+	 * file size can be expected.  
+	 *
+	 * Compression is much lower for binaries; around 25% for uuencoded
+	 * compressed file, and none at all for yEnc.  NTS will not try to
+	 * compress yEnc articles.
+	 *
+	 * Compression uses more CPU, since NTS has to decompress on every 
+	 * spool load.  Compression level can be between 1 (least CPU, worst 
+	 * compression) and 9 (most CPU, best compression).
+	 */
+        #compress:      6;
 };
 
 logging {

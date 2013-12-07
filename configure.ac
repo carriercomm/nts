@@ -1,13 +1,11 @@
 dnl RT/NTS -- a lightweight, high performance news transit server.
 dnl 
-dnl Copyright (c) 2011 River Tarnell.
+dnl Copyright (c) 2011-2013 River Tarnell.
 dnl
 dnl Permission is granted to anyone to use this software for any purpose,
 dnl including commercial applications, and to alter it and redistribute it
 dnl freely. This software is provided 'as-is', without any express or implied
 dnl warranty.
-dnl
-dnl $Header: /cvsroot/nts/configure.ac,v 1.10 2012/01/07 15:51:16 river Exp $
 
 AC_PREREQ([2.68])
 AC_INIT([RT/NTS], [1.0-CURRENT], [river@RT.UK.EU.ORG])
@@ -48,6 +46,9 @@ fi
 
 AC_CHECK_LIB([ev], [ev_run], [], [AC_MSG_ERROR([cannot find libev])])
 AC_CHECK_HEADER([ev.h], [], [AC_MSG_ERROR([cannot find ev.h])])
+
+AC_CHECK_LIB([z], [compress], [], [AC_MSG_ERROR([cannot find zlib])])
+AC_CHECK_HEADER([zlib.h], [], [AC_MSG_ERROR([cannot find zlib.h])])
 
 AC_CHECK_HEADERS([inttypes.h stdint.h])
 

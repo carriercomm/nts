@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/article.h,v 1.12 2012/01/04 10:05:03 river Exp $ */
 
 #ifndef	NTS_ARTICLE_H
 #define	NTS_ARTICLE_H
@@ -37,9 +36,11 @@
 #define	ART_TYPE_UUE		0x00400000
 #define	ART_TYPE_BINARY		0x00F00000
 
-#define	ART_TYPE_MIME_TEXT	0x10000000
-#define ART_TYPE_HTML		0x20000000
-#define ART_TYPE_ODD_TEXT	0xF0000000
+#define	ART_TYPE_MIME_TEXT	0x01000000
+#define ART_TYPE_HTML		0x02000000
+#define ART_TYPE_ODD_TEXT	0x0F000000
+
+#define	ART_COMPRESSED		0x10000000	/* (spool) Article is compressed */
 
 typedef struct article {
 	str_t		 art_path;

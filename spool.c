@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011, 2012 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/spool.c,v 1.29 2012/01/10 17:13:13 river Exp $ */
 
 /*
  * A spool "file" is actually a directory, containing sequentially numberered
@@ -39,6 +38,8 @@
 #include	<dirent.h>
 #include	<limits.h>
 
+#include	<zlib.h>
+
 #include	"spool.h"
 #include	"config.h"
 #include	"nts.h"
@@ -54,12 +55,14 @@ static uint64_t	 spool_size = 1024 * 1024 * 100; /* 100MB */
 static int64_t	 spool_max_files = 10;
 static int	 spool_do_sync = 1;
 static int	 spool_check_crc = 0;
+static int	 spool_compress;
 static enum {
 	M_FILE,
 	M_MMAP
 } spool_method = sizeof(void *) >= 8 ? M_MMAP : M_FILE;
 
 static void	 spool_set_method(conf_stanza_t *, conf_option_t *, void *, void *);
+static void	 spool_set_compress(conf_stanza_t *, conf_option_t *, void *, void *);
 
 static config_schema_opt_t spool_opts[] = {
 	{ "path",	OPT_TYPE_STRING,	config_simple_string,	&spool_path },
@@ -68,6 +71,7 @@ static config_schema_opt_t spool_opts[] = {
 	{ "sync",	OPT_TYPE_BOOLEAN,	config_simple_boolean,	&spool_do_sync },
 	{ "check-crc",	OPT_TYPE_BOOLEAN,	config_simple_boolean,	&spool_check_crc },
 	{ "method",	OPT_TYPE_STRING,	spool_set_method },
+	{ "compress",	OPT_TYPE_NUMBER,	spool_set_compress },
 	{ }
 };
 
@@ -95,9 +99,10 @@ typedef struct spool_header {
 	double		sa_emp_score;
 	double		sa_phl_score;
 	uint64_t	sa_crc;
+	uint32_t	sa_text_len;
 } spool_header_t;
 
-#define	SPOOL_HDR_SIZE	(4 + 4 + 1 + 4 + 8 + 8 + 8)
+#define	SPOOL_HDR_SIZE	(4 + 4 + 1 + 4 + 8 + 8 + 8 + 4)
 #define	SPOOL_MAGIC	0x4E53504C	/* NSPL */
 #define	SPOOL_MAGIC_EOS	0x4E454E44	/* NEND */
 
@@ -138,6 +143,19 @@ char	*v = opt->co_value->cv_string;
 			opt->co_file, opt->co_lineno, v);
 }
 
+static void
+spool_set_compress(stz, opt, udata, arg)
+	conf_stanza_t	*stz;
+	conf_option_t	*opt;
+	void		*udata, *arg;
+{
+int	n = opt->co_value->cv_number;
+
+	if (n < 1 || n > 9)
+		nts_log(LOG_ERR, "\"%s\", line %d: compression must be between 1 and 9",
+				opt->co_file, opt->co_lineno);
+	spool_compress = n;
+}
 int
 spool_run()
 {
@@ -212,8 +230,11 @@ spool_store(art)
 spool_file_t	*sf = &spool_files[spool_cur_file];
 unsigned char	*hdr;
 unsigned char	 hdrbuf[SPOOL_HDR_SIZE * 2];
+int		 hdrpos = 0;
 size_t		 artlen = str_length(art->art_content);
 int		 ret;
+unsigned char	*data;
+unsigned long	 datalen;
 
 	if (sf->sf_size + artlen + SPOOL_HDR_SIZE*2 >= sf->sf_dsz) {
 		spool_write_size(NULL);
@@ -242,19 +263,37 @@ int		 ret;
 		hdr = hdrbuf;
 
 	art->art_flags |= ART_CRC;
+	art->art_flags &= ~ART_COMPRESSED;
 
-	int32put(hdr + 0, SPOOL_MAGIC);
-	int32put(hdr + 4, artlen);
-	int8put(hdr + 8, SPOOL_HDR_SIZE);
-	int32put(hdr + 9, art->art_flags & ~ART_FILTERED);
-	int64put(hdr + 13, art->art_emp_score * 1000);
-	int64put(hdr + 21, art->art_phl_score * 1000);
-	int64put(hdr + 29, crc64(str_begin(art->art_content), str_length(art->art_content)));
+	if (spool_compress && !(art->art_flags & ART_TYPE_YENC)) {
+		datalen = compressBound(str_length(art->art_content));
+		data = xmalloc(datalen);
+
+		if (compress2(data, &datalen, str_begin(art->art_content),
+			      str_length(art->art_content), spool_compress) != Z_OK)
+			panic("spool: compress failed");
+
+		art->art_flags |= ART_COMPRESSED;
+	} else {
+		data = str_begin(art->art_content);
+		datalen = str_length(art->art_content);
+	}
+
+	int32put(hdr + hdrpos, SPOOL_MAGIC);			hdrpos += 4;
+	int32put(hdr + hdrpos, datalen);			hdrpos += 4;
+	int8put(hdr + hdrpos, SPOOL_HDR_SIZE);			hdrpos += 1;
+	int32put(hdr + hdrpos, art->art_flags & ~ART_FILTERED);	hdrpos += 4;
+	int64put(hdr + hdrpos, art->art_emp_score * 1000);	hdrpos += 8;
+	int64put(hdr + hdrpos, art->art_phl_score * 1000);	hdrpos += 8;
+	int64put(hdr + hdrpos, crc64(data, datalen));		hdrpos += 8;
+	int32put(hdr + hdrpos, artlen);				hdrpos += 4;
+
+	assert(hdrpos == SPOOL_HDR_SIZE);
 
 	if (spool_method == M_MMAP) {
-		bcopy(str_begin(art->art_content), hdr + SPOOL_HDR_SIZE, artlen);
-		spool_write_eos(sf, sf->sf_size + artlen + SPOOL_HDR_SIZE);
-		ret = msync(hdr, SPOOL_HDR_SIZE + artlen, spool_do_sync 
+		bcopy(data, hdr + SPOOL_HDR_SIZE, datalen);
+		spool_write_eos(sf, sf->sf_size + datalen + SPOOL_HDR_SIZE);
+		ret = msync(hdr, SPOOL_HDR_SIZE + datalen, spool_do_sync 
 			    ? MS_SYNC : MS_ASYNC);
 	} else {
 	struct iovec	iov[3];
@@ -262,8 +301,8 @@ int		 ret;
 		int32put(eos, SPOOL_MAGIC_EOS);
 		iov[0].iov_base = hdrbuf;
 		iov[0].iov_len = SPOOL_HDR_SIZE;
-		iov[1].iov_base = str_begin(art->art_content);
-		iov[1].iov_len = str_length(art->art_content);
+		iov[1].iov_base = data;
+		iov[1].iov_len = datalen;
 		iov[2].iov_base = eos;
 		iov[2].iov_len = sizeof(eos);
 
@@ -277,10 +316,13 @@ int		 ret;
 	if (ret == -1)
 		panic("spool: \"%s\": cannot sync: %s", sf->sf_fname, strerror(errno));
 
+	if (art->art_flags & ART_COMPRESSED)
+		free(data);
+
 	art->art_spool_pos.sp_id = spool_base + spool_cur_file;
 	art->art_spool_pos.sp_offset = sf->sf_size;
 
-	sf->sf_size += SPOOL_HDR_SIZE + artlen;
+	sf->sf_size += SPOOL_HDR_SIZE + datalen;
 
 	return 0;
 }
@@ -352,14 +394,42 @@ size_t		 artloc;
 		}
 	}
 
-	if (spool_method == M_MMAP)
-		artstr = str_new_cl_nocopy(artdata, hdr.sa_len);
-	else
-		artstr = str_new_cl(artdata, hdr.sa_len);
-	art = article_parse(artstr);
-	str_free(artstr);
+	if (hdr.sa_flags & ART_COMPRESSED) {
+	unsigned char	*data;
+	unsigned long	 datasize;
+	int		 ret;
+
+		datasize = hdr.sa_text_len;
+		data = xmalloc(datasize);
+
+		if ((ret = uncompress(data, &datasize, (unsigned char *) artdata,
+		                      hdr.sa_len)) != Z_OK) {
+			nts_log(LOG_WARNING, "spool: \"%s\": uncompress "
+					     "failed: %s", sf->sf_fname, zError(ret));
+
+			if (spool_method == M_FILE)
+				free(artdata);
+
+			free(data);
+			errno = EIO;
+			return NULL;
+		}
+
+		artstr = str_new_cl((char *) data, datasize);
+		free(data);
+	} else {
+		if (spool_method == M_MMAP)
+			artstr = str_new_cl_nocopy(artdata, hdr.sa_len);
+		else {
+			artstr = str_new_cl(artdata, hdr.sa_len);
+		}
+	}
+
 	if (spool_method == M_FILE)
 		free(artdata);
+
+	art = article_parse(artstr);
+	str_free(artstr);
 
 	if (!art)
 		return NULL;
@@ -616,6 +686,7 @@ spool_read_header(sf, pos, hdr)
 	spool_header_t	*hdr;
 {
 unsigned char	*hdrbuf;
+int		 hdrpos = 0;
 unsigned char	 rdbuf[SPOOL_HDR_SIZE];
 
 	if (spool_method == M_MMAP)
@@ -627,13 +698,16 @@ unsigned char	 rdbuf[SPOOL_HDR_SIZE];
 					strerror(errno));
 	}
 
-	hdr->sa_magic = int32get(hdrbuf + 0);
-	hdr->sa_len = int32get(hdrbuf + 4);
-	hdr->sa_hdr_len = int8get(hdrbuf + 8);
-	hdr->sa_flags = int32get(hdrbuf + 9);
-	hdr->sa_emp_score = ((double) int64get(hdrbuf + 13)) / 1000;
-	hdr->sa_phl_score = ((double) int64get(hdrbuf + 21)) / 1000;
-	hdr->sa_crc = int64get(hdrbuf + 29);
+	hdr->sa_magic = int32get(hdrbuf + hdrpos);				hdrpos += 4;
+	hdr->sa_len = int32get(hdrbuf + hdrpos);				hdrpos += 4;
+	hdr->sa_hdr_len = int8get(hdrbuf + hdrpos);				hdrpos += 1;
+	hdr->sa_flags = int32get(hdrbuf + hdrpos);				hdrpos += 4;
+	hdr->sa_emp_score = ((double) int64get(hdrbuf + hdrpos)) / 1000;	hdrpos += 8;
+	hdr->sa_phl_score = ((double) int64get(hdrbuf + hdrpos)) / 1000;	hdrpos += 8;
+	hdr->sa_crc = int64get(hdrbuf + hdrpos);				hdrpos += 8;
+	hdr->sa_text_len = int32get(hdrbuf + hdrpos);				hdrpos += 4;
+
+	assert(hdrpos == SPOOL_HDR_SIZE);
 
 	return SPOOL_HDR_SIZE;
 }
