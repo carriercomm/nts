@@ -269,9 +269,6 @@ int		 ret;
 		if (SIMPLEQ_EMPTY(&fe->fe_send_queue)) {
 		article_entry_t	*ae;
 
-			if (!server_wants_article(se, art))
-				continue;
-
 			ae = bzalloc(ba_ae);
 			++art->art_refs;
 			++fe->fe_send_queue_size;
@@ -602,6 +599,7 @@ feeder_check(fe, ae)
 		feeder_takethis(fe, ae);
 	} else {
 		time(&fe->fe_last_used);
+
 		hash_insert(fe->fe_waiting_hash, str_begin(ae->ae_article->art_msgid),
 				str_length(ae->ae_article->art_msgid), ae);
 
@@ -756,8 +754,8 @@ feeder_go(fe)
 		--fe->fe_send_queue_size;
 
 		if (hash_find(fe->fe_waiting_hash,
-					str_begin(ae->ae_article->art_msgid),
-					str_length(ae->ae_article->art_msgid))) {
+				str_begin(ae->ae_article->art_msgid),
+				str_length(ae->ae_article->art_msgid))) {
 			art_deref(ae->ae_article);
 			bfree(ba_ae, ae);
 			continue;
