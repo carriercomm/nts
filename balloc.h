@@ -27,7 +27,7 @@
 /* note: BALLOC_ATOMIC is suspected to be broken. */
 #define BALLOC_ATOMIC	0
 #define	BALLOC_STATS	1
-#define	USE_BALLOC	1
+#define	USE_BALLOC	0
 
 #if !defined(ATOMIC)
 # undef BALLOC_ATOMIC

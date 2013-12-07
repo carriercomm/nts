@@ -55,17 +55,18 @@ void *
 balloc(ba)
 	balloc_t	*ba;
 {
-#if BALLOC_ATOMIC
+#if USE_BALLOC
+# if BALLOC_ATOMIC
 balloc_entry_t	*head, *e, *be, *oldhead, *newhead;
-# if BALLOC_STATS
+#  if BALLOC_STATS
 	atomic_inc_ulong(&ba->ba_alloc);
-#  if 0
+#   if 0
 	pthread_mutex_lock(&ba->ba_mtx);
 	if ((ba->ba_alloc - ba->ba_free) > ba->ba_max)
 		++ba->ba_max;
 	pthread_mutex_unlock(&ba->ba_mtx);
+#   endif
 #  endif
-# endif
 	while ((head = ba->ba_list.bl_head) != NULL) {
 	balloc_entry_t	*next;
 		next = head->be_next;
@@ -88,7 +89,7 @@ balloc_entry_t	*head, *e, *be, *oldhead, *newhead;
 				oldhead, newhead) != oldhead);
 
 	return be + (ba->ba_nalloc - 1);
-#else
+# else /* BALLOC_ATOMIC */
 balloc_entry_t	*a;
 	pthread_mutex_lock(&ba->ba_mtx);
 	if (ba->ba_list.bl_head == NULL) {
@@ -107,7 +108,10 @@ balloc_entry_t	*a;
 		ba->ba_max++;	
 	pthread_mutex_unlock(&ba->ba_mtx);
 	return (char *)a;
-#endif
+# endif /* BALLOC_ATOMIC */
+#else /* USE_BALLOC */
+	return xmalloc(ba->ba_size);
+#endif /* USE_BALLOC */
 }
 
 void *
@@ -125,7 +129,8 @@ bfree(ba, p)
 	balloc_t	*ba;
 	void		*p;
 {
-#if BALLOC_ATOMIC
+#if USE_BALLOC
+# if BALLOC_ATOMIC
 balloc_entry_t	*be = (balloc_entry_t *)p,
 		*oldhead;
 	do {
@@ -133,18 +138,21 @@ balloc_entry_t	*be = (balloc_entry_t *)p,
 		be->be_next = oldhead;
 	} while (atomic_cas_ptr(&ba->ba_list.bl_head, 
 				oldhead, be) != oldhead);
-# if BALLOC_STATS
+#  if BALLOC_STATS
 	atomic_inc_ulong(&ba->ba_free);
-# endif
-#else
+#  endif
+# else /* BALLOC_ATOMIC */
 balloc_entry_t	*be = (balloc_entry_t *) p;
 	pthread_mutex_lock(&ba->ba_mtx);
 	be->be_next = ba->ba_list.bl_head;
 	ba->ba_list.bl_head = be;
-# if BALLOC_STATS
+#  if BALLOC_STATS
 	ba->ba_free++;
-# endif
+#  endif
 	pthread_mutex_unlock(&ba->ba_mtx);
+# endif
+#else /* USE_BALLOC */
+	free(p);
 #endif
 }
 
