@@ -993,6 +993,20 @@ error_handler_data_t	*eh = bzalloc(ba_ehd);
 	net_soon(net_call_handler_do, eh);
 }
 
+struct net_connect_done_data {
+	fde_t	*fde;
+	void	*udata;
+};
+
+static void
+net_call_connect_done(udata)
+	void	*udata;
+{
+int	fd = (int) udata;
+fde_t	*fde = fd_table[fd];
+	fde->fde_connect_handler(fd, FDE_CONNECT, udata);
+}
+
 void
 net_connect(prio, addr, addrlen, bindaddr, bindlen, hdl, errhdl, rhdl, udata)
 	struct sockaddr	*addr, *bindaddr;
@@ -1025,6 +1039,9 @@ fde_t	*fde;
 	fde = fd_table[fd];
 
 	fde->fde_udata = udata;
+	fd_table[fd]->fde_connect_handler = hdl;
+	fd_table[fd]->fde_error_handler = errhdl;
+	fd_table[fd]->fde_read_handler = rhdl;
 
 	if (bindaddr)
 		if (bind(fd, bindaddr, bindlen) == -1) {
@@ -1034,7 +1051,7 @@ fde_t	*fde;
 		}
 
 	if (connect(fd, addr, addrlen) == 0) {
-		hdl(fd, FDE_CONNECT, udata);
+		net_soon(net_call_connect_done, (void *) fd);
 		return;
 	}
 
@@ -1046,9 +1063,6 @@ fde_t	*fde;
 		return;
 	}
 
-	fd_table[fd]->fde_connect_handler = hdl;
-	fd_table[fd]->fde_error_handler = errhdl;
-	fd_table[fd]->fde_read_handler = rhdl;
 	ev_io_init(&fde->fde_write_watcher, net_connect_handler, fd, EV_WRITE);
 	ev_set_priority(&fde->fde_write_watcher, prio);
 	fde->fde_prio = prio;
