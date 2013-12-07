@@ -98,6 +98,7 @@ FILE	*f;
 	[db_version=`cat dbversion`
 	 AC_MSG_RESULT($db_version)],
 	[AC_MSG_ERROR([failed])])
+rm -f dbversion
 
 AC_CHECK_LIB([db4-$db_version], [db_create], [db_lib=db4-$db_version],
 	[AC_CHECK_LIB([db5-$db_version], [db_create], [db_lib=db5-$db_version],
