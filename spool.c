@@ -529,7 +529,6 @@ ssize_t		n;
 		hdr.sa_emp_score = ((double) int64get(hdrbuf + 13)) / 1000;
 		hdr.sa_phl_score = ((double) int64get(hdrbuf + 21)) / 1000;
 		hdr.sa_crc = int64get(hdrbuf + 29);
-		assert(37 == sizeof(hdrbuf));
 
 		if (hdr.sa_magic == SPOOL_MAGIC_EOS) {
 			nts_log(LOG_WARNING, "spool: \"%s\": found EOS at %lu",

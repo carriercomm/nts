@@ -273,7 +273,7 @@ int		 rcode, qdcount, ancount, nscount, arcount;
 	if (buflen < 12)
 		return DNS_ERR_PKTERR;
 
-	*qid = (bufp[0] << 8) | (bufp[1] & 0xFF);
+	*qid = ((int)bufp[0] << 8) | ((int)bufp[1] & 0xFF);
 	bufp += 2;
 	if (!(*bufp & DNS_FL_RESPONSE))
 		return DNS_ERR_PKTERR;
@@ -599,7 +599,7 @@ address_t		*addr;
 		nts_log(LOG_WARNING, "dns: received short packet");
 		return;
 	}
-	qid = (qbuf[0] << 8) | (qbuf[1] & 0xFF);
+	qid = ((int)qbuf[0] << 8) | ((int)qbuf[1] & 0xFF);
 
 	TAILQ_FOREACH(req, &active_requests, dr_list) {
 		if (req->dr_qid == qid)
