@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011, 2012 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/server.c,v 1.43 2012/01/10 01:03:06 river Exp $ */
 
 #include	<sys/types.h>
 #include	<sys/socket.h>
@@ -224,6 +223,7 @@ server_t	*server;
 		default_server = server;
 
 	server->se_adp_hi = -1;
+	SIMPLEQ_INIT(&server->se_clients);
 	SIMPLEQ_INIT(&server->se_filters_in);
 	SIMPLEQ_INIT(&server->se_filters_out);
 	SLIST_INIT(&server->se_accept_from);

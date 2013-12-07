@@ -698,6 +698,9 @@ ctl_do_peer_stats(ctl)
 server_t	*se;
 uint64_t	 t_in_a = 0, t_in_d = 0, t_in_ref = 0, t_in_rej = 0,
 		 t_out_a = 0, t_out_d = 0, t_out_ref = 0, t_out_rej = 0;
+double		 t_in_a_persec = 0, t_in_d_persec = 0, t_in_ref_persec = 0, t_in_rej_persec = 0,
+		 t_out_a_persec = 0, t_out_d_persec = 0, t_out_ref_persec = 0, t_out_rej_persec = 0;
+int		 nservers = 0;
 
 	ctl_printf(ctl, "stats average interval: %d seconds\n\n", (int) stats_interval);
 
@@ -711,7 +714,7 @@ uint64_t	 t_in_a = 0, t_in_d = 0, t_in_ref = 0, t_in_rej = 0,
 				se->se_in_deferred, se->se_in_deferred_persec,
 				se->se_in_refused, se->se_in_refused_persec,
 				se->se_in_rejected, se->se_in_rejected_persec);
-		ctl_printf(ctl, "   out: accept %"PRIu64" (%.2f/sec) "
+		ctl_printf(ctl, "  out: accept %"PRIu64" (%.2f/sec) "
 				"defer %"PRIu64" (%.2f/sec) "
 				"refuse %"PRIu64" (%.2f/sec) "
 				"reject %"PRIu64" (%.2f/sec)\n",
@@ -729,14 +732,37 @@ uint64_t	 t_in_a = 0, t_in_d = 0, t_in_ref = 0, t_in_rej = 0,
 		t_out_d += se->se_out_deferred;
 		t_out_ref += se->se_out_refused;
 		t_out_rej += se->se_out_rejected;
+
+		t_in_a_persec += se->se_in_accepted_persec;
+		t_in_d_persec += se->se_in_deferred_persec;
+		t_in_ref_persec += se->se_in_refused_persec;
+		t_in_rej_persec += se->se_in_rejected_persec;
+		t_out_a_persec += se->se_out_accepted_persec;
+		t_out_d_persec += se->se_out_deferred_persec;
+		t_out_ref_persec += se->se_out_refused_persec;
+		t_out_rej_persec += se->se_out_rejected_persec;
+
+		++nservers;
 	}
 
-#if 0
-	ctl_printf(ctl, "%-20s   In: %12"PRIu64" %12"PRIu64" %12"PRIu64" %12"PRIu64"\n"
-			"%-20s  Out: %12"PRIu64" %12"PRIu64" %12"PRIu64" %12"PRIu64"\n",
-		"TOTAL", t_in_a, t_in_d, t_in_ref, t_in_rej,
-		"", t_out_a, t_out_d, t_out_ref, t_out_rej);
-#endif
+	ctl_printf(ctl, "TOTAL\n");
+	ctl_printf(ctl, "   in: accept %"PRIu64" (%.2f/sec) "
+			"defer %"PRIu64" (%.2f/sec) "
+			"refuse %"PRIu64" (%.2f/sec) "
+			"reject %"PRIu64" (%.2f/sec)\n",
+		t_in_a, t_in_a_persec / nservers,
+		t_in_d, t_in_d_persec / nservers,
+		t_in_ref, t_in_ref_persec / nservers,
+		t_in_rej, t_in_rej_persec /nservers);
+
+	ctl_printf(ctl, "  out: accept %"PRIu64" (%.2f/sec) "
+			"defer %"PRIu64" (%.2f/sec) "
+			"refuse %"PRIu64" (%.2f/sec) "
+			"reject %"PRIu64" (%.2f/sec)\n",
+		t_out_a, t_out_a_persec / nservers,
+		t_out_d, t_out_d_persec / nservers,
+		t_out_ref, t_out_ref_persec / nservers,
+		t_out_rej, t_out_rej_persec /nservers);
 }
 
 void
@@ -744,12 +770,12 @@ ctl_do_filter_stats(ctl)
 	ctl_client_t	*ctl;
 {
 filter_list_entry_t	*fle;
-	ctl_printf(ctl, "%-22s       %12s %12s %12s\n",
+	ctl_printf(ctl, "%-22s   %12s %12s %12s\n",
 			"Filter name", "permit", "deny", "dunno");
 
 	SIMPLEQ_FOREACH(fle, &filter_list, fle_list) {
 	filter_t	*fi = fle->fle_filter;
-		ctl_printf(ctl, "%-22.*s       %12"PRIu64" %12"PRIu64" %12"PRIu64"\n",
+		ctl_printf(ctl, "%-22.*s   %12"PRIu64" %12"PRIu64" %12"PRIu64"\n",
 			str_printf(fi->fi_name), fi->fi_num_permit,
 			fi->fi_num_deny, fi->fi_num_dunno);
 	}
@@ -794,7 +820,32 @@ void
 ctl_do_client_stats(ctl)
 	ctl_client_t	*ctl;
 {
-	/* TODO: Implement me. */
+struct server	*se;
+
+	ctl_printf(ctl, "%-40s %-4s %s\n", "client", "ssl", "state");
+
+	SLIST_FOREACH(se, &servers, se_list) {
+	struct client	*client;
+
+		SIMPLEQ_FOREACH(client, &se->se_clients, cl_list) {
+		char	s[64] = {};
+			if (client->cl_flags & CL_PAUSED)
+				strcat(s, "paused,");
+			if (client->cl_flags & CL_DEAD)
+				strcat(s, "dead,");
+			if (client->cl_flags & CL_FREE)
+				strcat(s, "free,");
+			if (s[0])
+				s[strlen(s) - 2] = 0;
+			else
+				strcpy(s, "-");
+
+			ctl_printf(ctl, "%-40s %-4s %s\n",
+					client->cl_strname,
+					client->cl_flags & CL_SSL ? "y" : "-",
+					s);
+		}
+	}
 }
 
 #if BALLOC_STATS

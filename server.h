@@ -22,9 +22,11 @@
 #include	"spool.h"
 #include	"net.h"
 #include	"balloc.h"
+#include	"client.h"
 
 struct feeder;
 struct article;
+struct client;
 
 typedef struct hostlist_entry {
 	char				*hl_host;
@@ -102,6 +104,9 @@ typedef struct server {
 				 se_adp_lo;
 	char			*se_username_in,
 				*se_username_out;
+
+	client_list_t		 se_clients;
+
 	SLIST_ENTRY(server)	 se_list;
 } server_t;
 

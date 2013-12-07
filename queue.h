@@ -31,8 +31,8 @@
 /* $NetBSD: queue.h,v 1.49.6.1 2008/11/20 03:22:38 snj Exp $ */
 /* $Header: /cvsroot/nts/queue.h,v 1.3 2011/12/29 20:05:05 river Exp $ */
 
-#ifndef	_SYS_QUEUE_H_
-#define	_SYS_QUEUE_H_
+#ifndef	NTS_QUEUE_H
+#define	NTS_QUEUE_H
 
 #include	<stdio.h>
 

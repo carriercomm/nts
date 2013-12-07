@@ -1,7 +1,5 @@
-* SSL
 * outgoing auth
 * SASL (plain / cram / digest md5)
 * spool thread (aio)
-* worker threads for filtering/etc
 * external spam filter (cleanfeed)
-* unlocked balloc
+* unlocked balloc (sort of done - it's broken)

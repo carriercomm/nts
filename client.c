@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011, 2012 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/client.c,v 1.56 2012/01/10 17:13:42 river Exp $ */
 
 #include	<sys/types.h>
 #include	<sys/socket.h>
@@ -23,8 +22,12 @@
 #include	<errno.h>
 #include	<fcntl.h>
 
-#include	<openssl/ssl.h>
-#include	<openssl/err.h>
+#include	"setup.h"
+
+#ifdef HAVE_OPENSSL
+# include	<openssl/ssl.h>
+# include	<openssl/err.h>
+#endif
 
 #include	"client.h"
 #include	"net.h"
@@ -39,7 +42,6 @@
 #include	"hash.h"
 #include	"filter.h"
 #include	"feeder.h"
-#include	"setup.h"
 #include	"balloc.h"
 #include	"auth.h"
 #include	"thread.h"
@@ -324,6 +326,7 @@ int		 one = 1;
 			client_close(client);
 			return;
 		}
+		SIMPLEQ_INSERT_TAIL(&server->se_clients, client, cl_list);
 		++server->se_nconns;
 
 		client->cl_server = server;
@@ -756,6 +759,7 @@ str_t	type;
 						"(%s).\r\n", contact_address);
 					goto done;
 				}
+				SIMPLEQ_INSERT_TAIL(&se->se_clients, client, cl_list);
 				++se->se_nconns;
 
 				snprintf(strname, sizeof(strname), "%s[%s]:%s",
@@ -1041,8 +1045,10 @@ client_close_impl(udata)
 	void	*udata;
 {
 client_t	*client = udata;
-	if (client->cl_server)
+	if (client->cl_server) {
 		--client->cl_server->se_nconns;
+		SIMPLEQ_REMOVE(&client->cl_server->se_clients, client, client, cl_list);
+	}
 
 	pending_remove_client(client);
 	net_close(client->cl_fd);

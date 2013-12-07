@@ -12,6 +12,9 @@
 #ifndef	NTS_CLIENT_H
 #define	NTS_CLIENT_H
 
+#include	<sys/types.h>
+#include	<sys/socket.h>
+
 #include	<stdlib.h>
 
 #include	"setup.h"
@@ -21,8 +24,11 @@
 #endif
 
 #include	"queue.h"
-#include	"server.h"
 #include	"str.h"
+#include	"filter.h"
+
+struct server;
+struct article;
 
 typedef enum client_state {
 	CS_SSL_HANDSHAKE,
@@ -57,7 +63,7 @@ typedef struct listener {
 
 typedef struct client {
 	int		 cl_fd;
-	server_t	*cl_server;
+	struct server	*cl_server;
 	client_state_t	 cl_state;
 	str_t		 cl_article;
 	str_t		 cl_msgid;
@@ -77,9 +83,13 @@ typedef struct client {
 
 	/* for client_filter() */
 	filter_result_t	 cl_filter_result;
-	article_t	*cl_farticle;
+	struct article	*cl_farticle;
 	str_t		 cl_filter_name;
+
+	SIMPLEQ_ENTRY(client)	cl_list;
 } client_t;
+
+typedef SIMPLEQ_HEAD(client_list, client) client_list_t;
 
 int	client_init(void);
 int	client_run(void);
