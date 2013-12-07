@@ -76,10 +76,8 @@ balloc_entry_t	*head, *e, *be, *oldhead, *newhead;
 	}
 
 	be = xmalloc(ba->ba_nalloc * ba->ba_size);
-	for (e = be;
-	     (char *)e < ((char *)be + ((ba->ba_nalloc - 2) * ba->ba_size));
-	     e = (balloc_entry_t *) ((char *)e + ba->ba_size))
-		e->be_next = (balloc_entry_t *) ((char *)e + ba->ba_size);
+	for (e = be; e < be + ba->ba_nalloc - 2; e++)
+		e->be_next = e + 1;
 	e->be_next = NULL;
 
 	do {
@@ -89,7 +87,7 @@ balloc_entry_t	*head, *e, *be, *oldhead, *newhead;
 	} while (atomic_cas_ptr(&ba->ba_list.bl_head, 
 				oldhead, newhead) != oldhead);
 
-	return ((char*)be + ((ba->ba_nalloc - 1) * ba->ba_size)) + sizeof(balloc_entry_t);
+	return be + (ba->ba_nalloc - 1);
 #else
 balloc_entry_t	*a;
 	pthread_mutex_lock(&ba->ba_mtx);
