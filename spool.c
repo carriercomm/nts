@@ -57,7 +57,7 @@ static int	 spool_check_crc = 0;
 static enum {
 	M_FILE,
 	M_MMAP
-}		 spool_method = M_MMAP;
+} spool_method = sizeof(void *) >= 8 ? M_MMAP : M_FILE;
 
 static void	 spool_set_method(conf_stanza_t *, conf_option_t *, void *, void *);
 

@@ -261,6 +261,8 @@ spool {
 	 * "mmap" is faster and uses less memory, but it requires enough VM
 	 * to map the entire spool.  On a 32-bit platform this limits you to 
 	 * around 2-3GB of spool, depending on OS.  
+	 *
+	 * The default is "mmap" on 64-bit platforms and "file" elsewhere.
 	 */
 	method:		mmap;
 };
