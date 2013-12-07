@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+# PROVIDE: nts
+# REQUIRE: DAEMON
+
+. /etc/rc.subr
+
+name="nts"
+rcvar=$name
+command="/usr/local/sbin/${name}"
+piddir="/var/run/${name}"
+pidfile="${piddir}/${name}.lock"
+
+load_rc_config $name
+
+if [ $nts_chroot = YES ]; then
+	pidfile="$nts_chroot_dir/${name}.pid"
+fi
+
+run_rc_command "$1"

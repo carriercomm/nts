@@ -1,0 +1,573 @@
+/* RT/NTS -- a lightweight, high performance news transit server. */
+/* 
+ * Copyright (c) 2011 River Tarnell.
+ *
+ * Permission is granted to anyone to use this software for any purpose,
+ * including commercial applications, and to alter it and redistribute it
+ * freely. This software is provided 'as-is', without any express or implied
+ * warranty.
+ */
+/* $Header: /cvsroot/nts/nts.conf.example,v 1.15 2012/01/08 22:42:01 river Exp $ */
+
+/*
+ * The name of this server; will be inserted into the Path: header for
+ * articles we handle.
+ */
+server "nts.rt.uk.eu.org" {
+	/*
+	 * Add some additional entries to the Path: header if they don't
+	 * already exist there.
+	 */
+	common-paths: "rt.uk.eu.org", "news-transit.tcx.org.uk";
+
+	/*
+	 *  Contact address, used in error messages and display in the client
+	 * connection banner.
+	 */
+	contact:		"news@RT.UK.EU.ORG";
+
+	/*
+	 * Maximum article size to accept from a peer.  Any articles larger
+	 * than this will be rejected (but we still have to read them, so
+	 * you don't save any bandwidth).
+	 */
+	max-size:		64 KB;
+
+	/*
+	 * If this is enabled, then after a peer sends CHECK <msg-id>, we will
+	 * reply with 431 (try again later) to any other peer that sends CHECK
+	 * for the same article, until the first peer either sends the article
+	 * or disconnects.
+	 *
+	 * This increases CPU and memory usage slightly, but saves bandwidth 
+	 * since otherwise several peers could CHECK the same article at once,
+	 * see we don't have it, and then all of them will send it.
+	 *
+	 * If a peer does a CHECK then disconnects before sending the article
+	 * (e.g., if it crashes), then article delivery can be delayed, but
+	 * it should arrive eventually.
+	 */
+	defer-pending:		yes;
+
+	/*
+	 * How long to remember articles for in the history database.  Any
+	 * incoming articles which are older than this will be rejected,
+	 * to avoid the situation where a peer sends a large number of old
+	 * articles, which have expired from the history, and are then re-sent
+	 * to other peers.
+	 */
+	history-remember:	10 days;	/* default */
+
+	pid-file:		"/var/run/nts/nts.pid";
+
+	control-socket:		"./nts.ctl";
+
+	/*
+ 	 * User/group to run as.  If no group is specified, the gid for the
+ 	 * specified user is used.
+ 	 */
+
+	user:	"news";
+	group:	"news";
+
+	/*
+	 * Set a path to a program that can handle readers.  If you set this,
+	 * then NTS behaves as follows:
+	 *
+	 * 	- unauthorised clients will be handed to the reader handler
+	 * 	  instead of receiving 502
+	 * 	- authorised clients will have MODE-READER in the CAPABILITIES
+	 * 	  response
+	 * 	- a client which sends MODE READER will be handed to the 
+	 * 	  reader handler.
+	 *
+	 * The handler will be executed with the client's socket as stdin,
+	 * stdout and stderr, as if it had been run from inetd.
+	 *
+	 * This allows you to run RT/NTS and another NNTP server, which supports
+	 * readers, on the same port.  A suitable program to use here is INN's
+	 * nnrpd.
+	 *
+	 * The reader program will be started as the user "reader-user", if
+	 * configured.  This only works if NTS is started as root (but it
+	 * doesn't have to *run* as root);
+	 */
+	reader-handler:	"/usr/pkg/libexec/inn/nnrpd";
+	reader-user:	"news";
+	reader-group:	"news";
+
+
+	/*
+	 * Number of worker threads to create.  Worker threads are used for
+	 * running article filters.  Set this to 0 and all work will be done
+	 * in a single thread.
+	 *
+	 * Setting this to around the number of CPUs is probably reasonable.
+	 */
+	worker-threads:	2;
+};
+
+/* Listen on a port on all addresses. */
+listen "8433";
+listen "8119";
+/* Just listen on a particular address */
+listen "127.0.0.1:8434";
+
+/*
+ * An SSL listener.
+ */
+listen "563" {
+	/*
+	 * "always" to do SSL on connect (old-style) or "starttls" to start
+	 * unencrypted and allow the client to enable TLS.  "starttls" is
+	 * preferable, but not all clients implement it, so you may want to
+	 * provide both.
+	 *
+	 * NB: starttls is not yet implemented.
+	 */
+	ssl:			always;
+
+	/*
+	 * Location of the secret key and certificate.  The certificate should
+	 * include any chaining required for validation (e.g. your SSL CA's
+	 * signing certificate).
+	 */
+	ssl-key:		"my-ssl-key.pem";
+	ssl-certificate:	"my-ssl-cert.pem";
+};
+
+/*
+ * If you're using authentication for incoming connections, define
+ * the password file here.  It should only be readable by the NTS
+ * user.
+ *
+ * The file consists of a series of "username:password" pairs, one
+ * per line.  To actually cause authentication to happen, you also
+ * need to specify "incoming-user: whatever" in a peer definition.
+ *
+ * The password can optionally be hashed in the database.  If it is
+ * *not* hashed, then it must be prefixed with $plain$, e.g.:
+ *
+ *   scott:$plain$tiger
+ *
+ * to accept the user "scott" with password "tiger".
+ *
+ * To generate hashed passwords, set default-hash below then run
+ * "nts -x hashpw";
+ */
+
+auth {
+	password-file:	"/usr/local/etc/nts.pw";
+
+	/*
+	 * Several hash algorithms are available:
+	 *
+	 * des:		old-style Unix hash; not secure, but might be useful if
+	 * 		you have existing passwords in thes format.  Do not use
+	 * 		it for new installations.
+	 *
+	 * newdes, nrounds:
+	 * 		modified DES algorithm using a configurable number of
+	 * 		rounds.  Found in NetBSD via BSD/OS; probably not
+	 * 		especially useful.  If "nrounds" is omitted it defaults
+	 * 		to 7250.
+	 *
+	 * blowfish, nrounds:
+	 * 		Schneier's Blowfish algorithm with the specified
+	 * 		number of rounds, as originally seen in OpenBSD.
+	 * 		If nrounds is omitted it defaults to 7.  This is a good
+	 * 		choice for a general password hash.
+	 *
+	 * sha1, nrounds:
+	 * 		SHA-1 HMAC with the specified number of rounds.  While
+	 * 		SHA-1 is not yet broken, it is known to be weak and
+	 * 		probably shouldn't be used for new passwords.  If nrounds
+	 * 		is omitted it defaults to 24680.
+	 *
+	 * md5:		RSA Data Security, Inc. MD5 Message-Digest Algorithm.
+	 * 		Broken, don't use it.
+	 *
+	 * Note that a password hash in any format will work regardless of the
+	 * value of default-hash; this only affects the "hashpw" command for
+	 * generating *new* passwords.
+	 */
+	
+	default-hash:	blowfish, 7;
+
+	/*
+	 * If this is enabled, NTS will allow use of plaintext authentication
+	 * (AUTHINFO USER or SASL PLAIN) over a non-TLS connection.  Normally,
+	 * insecure connections only allow digest authentication.
+	 *
+	 * Digest authentication is not implement yet, so effectively this
+	 * disables *all* authentication over insecure channels.
+	 */
+	insecure-auth:	no;
+};
+
+/*
+ * Location of the database.  This holds the history and EMP database.
+ */
+database {
+	path:		"/var/db/nts";
+
+	/*
+	 * Cache size defaults to 5MB, which is probably fine for most
+	 * workloads.  If you notice a lot of I/O on the database, try
+	 * increasing it.
+	 */
+	cache-size:	5 MB;
+};
+
+spool {
+	/*
+	 * Directory to store the spool in.  If this already exists, it must
+	 * be empty; otherwise, it will be created.
+	 */
+	path:		"/var/spool/nts";
+
+	/*
+	 * Maximum size of a single spool file.
+	 */
+	size:		1 MB;
+
+	/*
+	 * Maximum number of files in the spool at once.  max-files * size is
+	 * the largest amount of disk space the spool will use.
+	 *
+	 * This should be set to at least 2, otherwise you can lose articles
+	 * on spool file rotation.
+	 */
+	max-files:	10;
+
+	/*
+	 * Whether to sync the spool file after writing to it.  The default
+	 * and recommended value is "yes".  If you set it to "no", you can
+	 * lose up to 10 seconds' worth of incoming articles if the host OS
+	 * crashes (e.g. on power failure).
+	 */
+	sync:		yes;
+
+	/*
+	 * Whether to check the CRC when loading an article from the spool.
+	 * Probably unnecessary; CRCs are always checked when verifying an
+	 * inconsistent spool.
+	 */
+	check-crc:	no;
+
+	/*
+	 * Method to access the spool; can be either "file" to use normal file
+	 * I/O (pread/pwrite) or "mmap" to map the spool file into memory.  
+	 * "mmap" is faster and uses less memory, but it requires enough VM
+	 * to map the entire spool.  On a 32-bit platform this limits you to 
+	 * around 2-3GB of spool, depending on OS.  
+	 */
+	method:		mmap;
+};
+
+logging {
+	/*
+	 * Log target can be "stdout", "syslog", or a file path.  Log file
+	 * rotation can be done by an external program; NTS will notice
+	 * within 10 seconds and re-open the log file.
+	 */
+	target:		stdout;
+
+	/*
+ 	 * Log incoming articles here in an INN-like format.
+ 	 */
+	incoming-log:	"/var/log/nts/incoming.log";
+
+	/*
+ 	 * Log all Path: headers from accepted incoming articles.  Use this
+ 	 * with ninpaths to send Top 1000 stats.
+ 	 */
+	path-log:	"/var/log/nts/path.log";
+};
+
+/*
+ * Filters allow you to reject articles based on certain criteria.  A filter can
+ * be applied to a server is either an incoming filter, which will reject incoming
+ * articles from that server, or an outgoing filter, which will prevent articles 
+ * being sent to that server.
+ *
+ * Each filter defines one criteria (e.g., reject binary messages, or reject all
+ * messages in a particular group).  Filters can then be combined into filter groups,
+ * which act something like ACLs; each article is run through every filter in the
+ * group, and the first filter which returns an explicit permit or deny result
+ * (as opposed to "don't care") decides the article's fate.
+ *
+ * Since RT/NTS does not use an active file to determine the list of valid groups,
+ * filters are the primary method to limit the newsgroups you want to accept at
+ * your site.  They also make it easy to e.g. define text-only peers who don't
+ * want to receive binary articles.
+ *
+ * The RT/NTS filter system is a from-scratch implementation in C, but I am
+ * indebted to Jeremey Nixon, Marco d'Itri and Steven Crook, maintainers of the
+ * Cleanfeed spam filter, which the NTS filter system (especially the EMP and PHL
+ * filters) is heavily inspired by.
+ */
+
+/*
+ * A filter to reject all articles in alt.sex.*.  99% of posts here are spam.
+ */
+filter "no-sex" {
+	groups:		"alt.sex.*";
+	action:		deny;
+};
+
+/*
+ * Filter spam cancels.
+ */
+filter "no-cancels" {
+	path:		"cyberspam";
+	action:		deny;
+};
+
+/*
+ * Filter *all* binaries.  The "binary" article type includes all uuencode and
+ * yenc posts, as well as MIME binary types, which is "audio/*", "video/*",
+ * "image/*", and "application/*" except for a few known-text application
+ * types, like PGP signatures (application/pgp-signature).
+ *
+ * The MIME filter is not a real MIME parser, but is "good enough" to detect
+ * most binaries.
+ */
+filter "reject-binary-posts" {
+	groups:		"*";
+	article-types:	binary;
+	action:		deny;
+	log-rejected:	yes;
+};
+
+/*
+ * Reject all posts in binary groups.  There's not much point carrying these
+ * posts if you don't carry the actual binaries as well.
+ */
+filter "reject-binary-groups" {
+	groups:		"*.*bina*", "*.*bain*";
+	action:		deny;
+};
+
+/*
+ * A suitable filter-group or a text-only server, or a text-only peer on a 
+ * binary server.
+ */
+filter-group "no-binaries" {
+	filters:	reject-binary-posts, reject-binary-groups;
+};
+
+/*
+ * Filter binaries posted in non-binary groups.  All servers should probably use
+ * a filter similar to this.
+ */
+filter "reject-misplaced-binaries" {
+	groups:		"*", "!*.bina*";
+	article-types:	binary;
+	action:		deny;
+	log-rejected:	yes;
+};
+
+/*
+ * When using "max-crosspost", EMP or PHL, there is no need to set action: deny.
+ * These options will automatically return a deny result if they match.
+ *
+ * This filter rejects all messages crossposted to more than 10 groups.
+ */
+filter "limit-crosspost" {
+	groups:		"*";
+	max-crosspost:	10;
+};
+
+/*
+ * The EMP filter tracks multiposting using a hash of the message body.  Each
+ * time a message arrives with the same content, the counter is incremented by
+ * the square root of the number of groups the article is cross-posted to; every
+ * hour, it's decremented by emp-decay.  Once the counter reaches emp-limit,
+ * further duplicates of that message will be rejected.  Experience from
+ * Cleanfeed shows that this is a very effective method of filtering spam.
+ *
+ * Example: with emp-limit 20 and emp-decay 1, an article multiposted twice,
+ * each to 5 groups, would score 4.47 (sqrt(5) + sqrt(5)); the third multipost 
+ * would increase the score to 6.7 and that post would be rejected.  After 4
+ * hours, the score would fall to 2.7 and another copy of the same article would
+ * be accepted.  NTS actually re-calculates the score on every matching post, 
+ * so the score can fall before an entire hour has passed.
+ *
+ * emp-limit and emp-decay must be whole numbers.  Do not set emp-decay to 0, or
+ * the database will grow forever and no entries will be expired.
+ *
+ * There is only one EMP database, and if EMP tracking is used, all articles are
+ * fed to the filter.  However, multiple EMP filters can be defined with
+ * different group lists and emp-limits.
+ *
+ * The PHL filter works the same way as the EMP filter, but uses a combination
+ * of posting host (from the article header) and line count instead of a hash. 
+ * The assumption here is that a host posting a large number of articles with 
+ * the same line count is probably spamming, but modifying the message body to 
+ * avoid EMP filters.
+ *
+ * Don't set phl-limit too low, or you might catch legitimate short messages
+ * from frequent posters, mailing list gateways, etc.
+ */
+
+/*
+ * emp {} defines the EMP and PHL global options.
+ */
+emp {
+	emp-decay:		1;
+
+	/*
+	 * Limit the maximum score any database entry can have.  This prevents
+	 * large spam runs from staying around in the database forever.
+	 */
+	emp-score-limit:	100;
+
+	phl-decay:		10;
+	phl-score-limit:	20;	/* 2 hour(ish) lifetime */
+
+	/*
+	 * Select the algorithm used to calculate an article score.
+	 *
+	 *	bi	sum sqrt(ngroups) (as described above)
+	 *	bi2	sum ((sqrt(ngroups) + ngroups) / 2) - more aggressive
+	 *		than bi, but more tolerant of multi-posting instead
+	 *		of cross-posting.
+	 *	sbi	Skirvin-Breidbart index; as "bi", but if the article
+	 *		has a Followup-to: header, count that instead of
+	 *		Newsgroups:.  Encourages people to set a followup-to
+	 *		header.
+	 *	aci	at.* cancel index; sum (3 + ngroups).
+	 */
+	index:			bi;	/* Default */
+
+	/* 
+	 * Don't run the filter on articles that have a References: header
+	 * (i.e., replies).  This reduces filter CPU usage and the size of the
+	 * database.
+	 */ 
+	skip-replies:		yes;
+
+	/*
+	 * Exempt these hosts from the PHL filter.  Add common hosts here, e.g.
+	 * "localhost", used by many mailing list gateways.
+	 */
+	phl-exempt:		"localhost", "127.0.0.1";
+};
+
+/*
+ * A filter to reject articles based on their EMP score.
+ */
+filter "limit-emp" {
+	/*
+	 * Don't apply the EMP filter to mailing list gateways, as these
+	 * are usually moderated.
+	 */
+	groups:		"*", "!fa.*", "!mailing.*", "!mpc.*";
+
+	emp-limit:	10;
+	phl-limit:	15;
+
+	/* Log articles rejected by this filter to the server log, like INN/Cleanfeed */
+	log-rejected:	no;
+};
+
+/*
+ * alt.sex.* groups get a lot of EMP, so be more strict there.
+ */
+filter "limit-emp-low" {
+	groups:		"alt.sex.*";
+	phl-limit:	3;
+	emp-limit:	3;
+	log-rejected:	no;
+};
+
+/*
+ * A filter group can be used in place of a filter.  It will evaluate all
+ * filters in turn; the first to return an explicit permit or deny will decide 
+ * the article's fate.
+ */
+filter-group "std" {
+	filters:	no-cancels, no-binaries, limit-crosspost, limit-emp, limit-emp-low;
+};
+
+/*
+ * Define the defaults for all servers.  These settings will apply to
+ * servers that don't explicitly override them.
+ */
+peer {
+	max-incoming-connections:	15;
+	outgoing-filters:		std;
+
+	/*
+ 	 * Address to bind to for outgoing connections.  bind-address-v4
+ 	 * and bind-address-v6 set the address separately for IPv4 and
+ 	 * IPv6 connections, while bind-address sets both at once.
+ 	 * Using bind-address probably only makes sense with a hostname,
+ 	 * unless your site is IPv4-only.
+ 	 */
+	bind-address:	"news.example.com";
+
+	/*
+	 * Adaptive feeding: when "adaptive: hi, lo" is configured, NTS will
+	 * record how many articles the peer accepts.  If, after 100 articles
+	 * have been sent, at least hi% of them were accepted, it will stop
+	 * sending CHECK commands and go straight to TAKETHIS.  If the
+	 * percentage drops below lo%, it will switch back to using CHECK.
+	 *
+	 * If only one value is set, it will be used for both hi and lo.  Set
+	 * "adaptive: 0" to never send CHECK commands (not recommended for
+	 * normal peers, or you will waste a lot of bandwidth.)
+	 */
+	adaptive:	95, 90;
+};
+
+/*
+ * Define a peer.
+ */
+peer "news-transit.rt.uk.eu.org" {
+	/*
+	 * Hosts we accept incoming news from.  We resolve this host to a list
+	 * of IP addresses at startup, and use that to verify connections.
+	 */
+	accept-from:		news-transit.rt.uk.eu.org;
+
+	/*
+	 * Where to send outgoing news.  Multiple hosts may be specified.
+	 */
+	/*send-to:		"news-transit.rt.uk.eu.org";
+	port:			119;*/
+
+	/*
+	 * Don't send the peer articles where these entries appear in the path;
+	 */
+	exclude:		news-transit.rt.uk.eu.org,
+				rt.uk.eu.org;
+
+	/*
+	 * Filters to apply on articles from this server; see above.
+	 */
+	incoming-filters:	std;
+
+	/* Don't send articles larger than this */
+	max-size:		64 KB;
+};
+
+peer "localhost" {
+	accept-from:			"localhost";
+	max-incoming-connections:	1;
+
+	/*
+	 * This peer has to authenticate before it can send articles.
+	 */
+	incoming-username:		"localhost";
+};
+
+peer "news.rt.uk.eu.org" {
+	send-to:	"news.rt.uk.eu.org";
+	port:		433;
+	accept-from:	news.rt.uk.eu.org;
+	exclude:	isis.rt.uk.eu.org;
+
+	incoming-filters:	std;
+};

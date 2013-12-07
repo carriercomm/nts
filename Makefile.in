@@ -1,0 +1,101 @@
+# RT/NTS -- a lightweight, high performance news transit server.
+# 
+# Copyright (c) 2011 River Tarnell.
+#
+# Permission is granted to anyone to use this software for any purpose,
+# including commercial applications, and to alter it and redistribute it
+# freely. This software is provided 'as-is', without any express or implied
+# warranty.
+#
+# $Header: /cvsroot/nts/Makefile.in,v 1.18 2012/01/07 21:27:17 river Exp $
+
+
+prefix		= @prefix@
+exec_prefix	= @exec_prefix@
+bindir		= @bindir@
+sbindir		= @sbindir@
+sysconfdir	= @sysconfdir@
+
+CC		= @CC@
+MAKEDEPEND	= @CC@ -MM
+INSTALL		= @INSTALL@
+CFLAGS		= @CFLAGS@
+LDFLAGS		= @LDFLAGS@
+CPPFLAGS	= @CPPFLAGS@	\
+		  -DSYSCONFDIR=\"@sysconfdir@\"
+LIBS		= @LIBS@
+
+YACC		= @YACC@
+LEX		= @LEX@
+
+SRCS		= nts.c		config.c	net.c		client.c	\
+		  server.c	spool.c		log.c		article.c	\
+		  history.c	database.c	hash.c		str.c		\
+		  crc.c		wildmat.c	filter.c	feeder.c	\
+		  charq.c	rfile.c		balloc.c	auth.c		\
+		  crypt.c	strlcpy.c	thread.c	emp.c		\
+		  dns.c		base64.c
+
+EXTRA_SRCS	= @EXTRA_SRCS@
+OBJS		= ${SRCS:.c=.o} ${EXTRA_SRCS:.c=.o}
+
+HDRS		= article.h config.h database.h filter.h history.h net.h	\
+		  str.h client.h crc.h feeder.h hash.h log.h nts.h server.h	\
+		  spool.h wildmat.h queue.h charq.h rfile.h balloc.h auth.h	\
+		  crypt.h thread.h emp.h dns.h base64.h
+EXTRA_DIST	= Makefile.in nts.conf.example parser.y lexer.l setup.h.in	\
+		  configure.ac configure LICENSE strlcpy.c 
+all: nts
+
+dist:
+	@version=`sed -n 's/^AC_INIT(\[[^]]*\], \[\([^]]*\)\], \[[^]]*\])$$/\1/p' \
+	    		configure.ac`;						\
+	rm -rf nts-$$version;							\
+	mkdir nts-$$version;							\
+	cp ${SRCS} ${HDRS} ${EXTRA_DIST} nts-$$version/;			\
+	tar cf nts-$$version.tar nts-$$version;					\
+	gzip -f nts-$$version.tar;						\
+	ls -l nts-$$version.tar.gz
+
+nts: $(OBJS) y.tab.o lex.yy.o vers.o
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) y.tab.o lex.yy.o vers.o -o nts $(LIBS)
+
+install:
+	${INSTALL} -d ${sbindir}
+	${INSTALL} -m 0755 nts ${sbindir}
+	${INSTALL} -d ${sysconfdir}
+	${INSTALL} -m 0644 nts.conf.example ${sysconfdir}
+	if ! test -e ${sysconfdir}/nts.conf; then	\
+		cp ${sysconfdir}/nts.conf.example	\
+			${sysconfdir}/nts.conf;		\
+	fi
+
+y.tab.c y.tab.h: parser.y
+	$(YACC) -d parser.y
+
+lex.yy.c: lexer.l
+	$(LEX) lexer.l
+
+lex.yy.o: lex.yy.c y.tab.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c lex.yy.c
+
+vers.o:	vers.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c vers.c
+
+vers.c:	build vers.sh
+	sh vers.sh
+
+.c.o:
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
+
+clean:
+	rm -f nts $(OBJS) lex.yy.c lex.yy.o y.tab.o y.tab.h y.tab.c
+
+depend:
+	sed '/^# Do not remove this line -- make depend needs it/,$$ d' \
+			<Makefile >Makefile.new
+	echo '# Do not remove this line -- make depend needs it' >>Makefile.new
+	$(MAKEDEPEND) $(CPPFLAGS) $(SRCS) >> Makefile.new
+	mv Makefile.new Makefile
+
+# Do not remove this line -- make depend needs it

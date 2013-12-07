@@ -1,0 +1,52 @@
+Welcome to RT/NTS, a high-performance, lightweight news transit server.
+This file describes how to build, install and configure RT/NTS.
+
+In case of bugs, questions, comments: mail river@RT.UK.EU.ORG.
+
+Requirements
+============
+
+RT/NTS requires the following software:
+
+* A reasonable modern Unix environment
+* Oracle Berkeley DB (http://www.oracle.com/technetwork/database/berkeleydb/overview/index.html)
+* libev (http://software.schmorp.de/pkg/libev.html)
+
+Building
+========
+
+RT/NTS uses GNU autoconf, the de-facto standard configuration system for
+Unix sources.  To build NTS, use something like this:
+
+	$ ./configure
+	$ make
+	$ make install
+
+NTS will try to find the location of libev and Berkeley DB automaticaly, but you
+may need to specify these explicitly, e.g.:
+
+	$ CPPFLAGS="-I/usr/pkg/include/ev"				\
+	  LDFLAGS="-L/usr/pkg/lib -R/usr/pkg/lib			\
+		-L/usr/pkg/lib/ev -R/usr/pkg/lib/ev"			\
+	  ./configure --with-db-include-dir=/usr/pkg/include/db4
+
+Configuration
+=============
+
+After 'make install', NTS will install a sample nts.conf.example.  Copy this to
+nts.conf, edit it as appropriate, and start NTS:
+
+	$ /usr/local/sbin/nts
+
+In the source directory you will find 'rc.bsd', a sample init script for BSD
+systems.  To use this, copy it to /etc/rc.d/nts, and edit rc.conf:
+
+	nts=YES
+	# If you chroot NTS, the init script expects the PID file to be
+	# at ${nts_chroot}/pid.
+	nts_chroot=/srv/nts
+
+You can then start and stop NTS like any other service.
+
+There is currently no init script for System V-style systems (e.g. Solaris
+or Linux); please contribute one.
