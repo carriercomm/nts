@@ -93,10 +93,12 @@ balloc_entry_t	*a;
 	pthread_mutex_lock(&ba->ba_mtx);
 	if (ba->ba_list.bl_head == NULL) {
 	balloc_entry_t	*e, *be = xmalloc(ba->ba_nalloc * ba->ba_size);
-		for (e = be; e < be + ba->ba_nalloc - 1; e++)
-			e->be_next = e + 1;
+		for (e = be;
+		     (char *)e < (char *)be + (ba->ba_size * (ba->ba_nalloc - 1));
+		     e = (balloc_entry_t *) ((char *)e + ba->ba_size))
+			e->be_next = (balloc_entry_t *) ((char *)e + ba->ba_size);
 		e->be_next = NULL;
-		ba->ba_list.bl_head = e;
+		ba->ba_list.bl_head = be;
 	}
 	a = ba->ba_list.bl_head;
 	ba->ba_list.bl_head = a->be_next;
