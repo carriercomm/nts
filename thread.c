@@ -82,6 +82,24 @@ pthread_attr_t	attr;
 	return 0;
 }
 
+typedef struct thr_dispatch_data {
+	thr_work_fn	 wfn;
+	thr_done_fn	 dfn;
+	void		*wdata;
+} thr_dispatch_data_t;
+
+void
+thr_dispatch_work(udata)
+	void	*udata;
+{
+thr_dispatch_data_t	*d = udata;
+void			*r;
+
+	r = d->wfn(d->wdata);
+	if (d->dfn)
+		d->dfn(r);
+}
+
 void
 thr_do_work(wfn, wdata, dfn)
 	thr_work_fn	 wfn;
@@ -91,9 +109,11 @@ thr_do_work(wfn, wdata, dfn)
 workunit_t	*work;
 
 	if (worker_threads == 0) {
-	void	*r = wfn(wdata);
-		if (dfn)
-			dfn(r);
+		thr_dispatch_data_t	*d = xcalloc(1, sizeof(*d));
+		d->wfn = wfn;
+		d->dfn = dfn;
+		d->wdata = wdata;
+		net_soon(thr_dispatch_work, d);
 		return;
 	}
 
