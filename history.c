@@ -207,7 +207,7 @@ char	 pkbuf[1024];
 	void		*p;
 	int		 n = 100;
 
-		txn = db_new_txn(0);
+		txn = db_new_txn(DB_TXN_WRITE_NOSYNC);
 
 		if (ret = history_added_idx->cursor(history_added_idx, txn, &curs, 0))
 			panic("history: cannot open cursor: %s", db_strerror(ret));
