@@ -23,6 +23,7 @@ static int commlevel;
 %}
 
 %x COMMENT
+%x HASHCOMMENT
 
 %%
 
@@ -43,6 +44,9 @@ no|false			{ return NO; }
 <COMMENT>\*\/			{ if (--commlevel == 0) { BEGIN(0); } }
 <COMMENT>.			;
 <COMMENT>\n			config_lineno++;
+#                               { BEGIN(HASHCOMMENT); }
+<HASHCOMMENT>.                  ;
+<HASHCOMMENT>\n                 { BEGIN(0); config_lineno++; }
 [a-zA-Z][a-zA-Z0-9\.\\_@-]*	{ yylval.string = strdup(yytext); return WORD; }
 [0-9]+				{ yylval.integer = atoi(yytext); return NUMBER; }
 \"[^"]*\"			{ yylval.string = strdup(yytext + 1);
