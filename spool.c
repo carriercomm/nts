@@ -755,6 +755,7 @@ int		 errors = 0;
 	uint64_t	spsz;
 	uint64_t	bread = 0;
 	uint64_t	rawbytes = 0, artbytes = 0;
+	int		narts = 0;
 
 		if (*de->d_name == '.')
 			continue;
@@ -866,11 +867,12 @@ int		 errors = 0;
 
 			rawbytes += hdr.sa_len;
 			artbytes += hdr.sa_text_len;
+			++narts;
 		}
 
 	next:
-		printf("nts:    \"%s\": %"PRIu64" bytes on disk, %"PRIu64" bytes uncompressed, "
-			"%.2fx ratio, %d error(s)\n", path, rawbytes, artbytes, (double)artbytes / rawbytes,
+		printf("nts:    \"%s\": %d articles, %"PRIu64" bytes on disk, %"PRIu64" bytes uncompressed, "
+			"%.2fx ratio, %d error(s)\n",  path, narts, rawbytes, artbytes, (double)artbytes / rawbytes,
 			errors);
 		close(fd);
 	}
