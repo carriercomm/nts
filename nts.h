@@ -71,7 +71,6 @@ extern int		 log_incoming_connections;
 extern char		*reader_handler;
 extern uint64_t		 stats_interval;
 extern uint64_t		 worker_threads;
-extern int		 build_number;
 
 int		reader_handoff(int);
 

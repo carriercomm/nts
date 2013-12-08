@@ -337,8 +337,8 @@ int		 one = 1;
 		client->cl_strname = xstrdup(strname);
 	}
 
-	client_printf(client, "200 RT/NTS %s #%d ready (%s).\r\n",
-			PACKAGE_VERSION, build_number, contact_address);
+	client_printf(client, "200 RT/NTS %s ready (%s).\r\n",
+			PACKAGE_VERSION,  contact_address);
 
 	if (log_incoming_connections)
 		client_log(LOG_INFO, client, "client connected");
@@ -508,8 +508,8 @@ c_capabilities(client, cmd, line)
 	client_printf(client,
 			"101 Capability list:\r\n"
 			"VERSION 2\r\n"
-			"IMPLEMENTATION RT/NTS %s #%d\r\n",
-			PACKAGE_VERSION, build_number);
+			"IMPLEMENTATION RT/NTS %s\r\n",
+			PACKAGE_VERSION);
 	if (!auth_enabled || client->cl_authenticated)
 		client_printf(client, "IHAVE\r\nSTREAMING\r\n");
 	if (reader_handler && !client->cl_authenticated && !client->cl_ssl)

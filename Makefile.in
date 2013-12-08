@@ -57,9 +57,8 @@ dist:
 	gzip -f nts-$$version.tar;						\
 	ls -l nts-$$version.tar.gz
 
-nts: $(OBJS) y.tab.o lex.yy.o vers.o
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) y.tab.o lex.yy.o vers.o -o nts $(LIBS)
-	echo `expr \`cat build\` + 1` > build
+nts: $(OBJS) y.tab.o lex.yy.o
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) y.tab.o lex.yy.o -o nts $(LIBS)
 
 install:
 	${INSTALL} -d ${sbindir}
@@ -81,15 +80,6 @@ lex.yy.c: lexer.l
 
 lex.yy.o: lex.yy.c y.tab.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c lex.yy.c
-
-vers.o:	vers.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c vers.c
-
-vers.c:	build vers.sh
-	sh vers.sh
-
-build:
-	echo 1 > build
 
 .c.o:
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<

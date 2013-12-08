@@ -180,8 +180,7 @@ int		 devnull;
 	while ((c = getopt(argc, argv, "Vc:p:nx:y")) != -1) {
 		switch (c) {
 			case 'V':
-				printf("RT/NTS %s #%d\n", PACKAGE_VERSION,
-						build_number);
+				printf("RT/NTS %s\n", PACKAGE_VERSION);
 				printf("\t%s\n", db_version(NULL, NULL, NULL));
 				printf("\tlibev %d.%d\n",
 						ev_version_major(),
@@ -499,7 +498,7 @@ int		 n;
 	}
 
 	if (str_equal_c(cmd, "version")) {
-		ctl_printf(ctl, "OK\n%s #%d\n", PACKAGE_VERSION, build_number);
+		ctl_printf(ctl, "OK\n%s\n", PACKAGE_VERSION);
 	} else if (str_equal_c(cmd, "peers")) {
 		ctl_printf(ctl, "OK\n");
 		ctl_do_peer_stats(ctl);
@@ -526,8 +525,8 @@ int		 n;
 	} else if (str_equal_c(cmd, "stats")) {
 	time_t	now = time(NULL);
 		ctl_printf(ctl, "OK\n");
-		ctl_printf(ctl, "RT/NTS %s #%d statistics as of %s",
-				PACKAGE_VERSION, build_number, ctime(&now));
+		ctl_printf(ctl, "RT/NTS %s statistics as of %s",
+				PACKAGE_VERSION, ctime(&now));
 		ctl_printf(ctl, "=========================================="
 				"==================\n");
 		ctl_printf(ctl, "\n%s\n\n", get_uptime());
