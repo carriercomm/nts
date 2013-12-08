@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/net.c,v 1.36 2012/01/09 18:35:54 river Exp $ */
 
 #include	<sys/socket.h>
 #include	<sys/un.h>
@@ -1124,4 +1123,18 @@ net_io_start(fd)
 {
 fde_t	*fde = fd_table[fd];
 	ev_io_start(loop, &fde->fde_read_watcher);
+}
+
+void
+alist_free(al)
+	address_list_t	*al;
+{
+address_t	*addr;
+
+	if (!al)
+		return;
+
+	SIMPLEQ_FOREACH(addr, al, ad_list)
+		free(addr);
+	free(al);
 }

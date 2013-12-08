@@ -46,6 +46,8 @@ typedef struct address {
 
 typedef SIMPLEQ_HEAD(address_list, address) address_list_t;
 
+void alist_free(address_list_t *);
+
 #define	NET_HIPRIO	1
 #define	NET_DEFPRIO	0
 #define	NET_LOWPRIO	-1
