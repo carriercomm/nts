@@ -48,8 +48,8 @@ typedef struct fconn {
 	time_t			 fc_last_used;
 	int			 fc_ncq;
 	sendq_t			 fc_cq;
-	struct addrinfo		*fc_addr,
-				*fc_addrs;
+	address_t		*fc_cur_addr;
+	address_list_t		*fc_addrs;
 	int			 fc_flags;
 	TAILQ_ENTRY(fconn)	 fc_list;
 } fconn_t;

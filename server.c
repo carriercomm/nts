@@ -858,7 +858,7 @@ int		 ret;
 	
 	art->art_refs = 0;
 
-	txn = db_new_txn(0);
+	txn = db_new_txn(spool_do_sync ? 0 : DB_TXN_WRITE_NOSYNC);
 
 	SLIST_FOREACH(se, &servers, se_list) {
 		if (!se->se_send_to || !server_wants_article(se, art))
@@ -903,6 +903,7 @@ qent_t *
 qealloc()
 {
 qent_t	*qe = xcalloc(1, sizeof(*qe));
+	return qe;
 }               
 
 void
@@ -911,4 +912,71 @@ qefree(qe)
 {
 	str_free(qe->qe_msgid);
 	free(qe);
+}
+
+void
+server_remove_q(se, qe)
+	server_t	*se;
+	qent_t		*qe;
+{
+DBT              key;
+int              ret;
+DB_TXN          *txn;
+unsigned char    dbuf[4 + 8];
+DB              *db;
+
+        bzero(&key, sizeof(key));
+        pack(dbuf, "uU", qe->qe_pos.sp_id, qe->qe_pos.sp_offset);
+        key.data = dbuf;
+        key.size = sizeof(dbuf);
+
+        db = (qe->qe_type == QT_Q) ?
+                  se->se_q
+                : se->se_deferred;
+
+        txn = db_new_txn(DB_TXN_WRITE_NOSYNC);
+
+        if (ret = db->del(db, txn, &key, 0))
+        /*      if (ret != DB_NOTFOUND)*/
+        /*              panic("cannot remove backlog entry: %s",
+                                        db_strerror(ret));*/
+                nts_log(LOG_WARNING, "cannot remove backlog entry %.8lX,%lu: %s",
+                                (long unsigned) qe->qe_pos.sp_id,
+                                (long unsigned) qe->qe_pos.sp_offset,
+                                db_strerror(ret));
+        txn->commit(txn, 0);
+}
+
+void
+server_defer(se, qe)
+	server_t	*se;
+	qent_t		*qe;
+{
+DBT              key, data;
+int              ret;
+unsigned char    dbuf[4 + 8];
+DB_TXN          *txn;
+
+        bzero(&key, sizeof(key));
+        bzero(&data, sizeof(data));
+
+	data.size = str_length(qe->qe_msgid);
+	data.data = str_begin(qe->qe_msgid);
+
+        pack(dbuf, "uU", qe->qe_pos.sp_id, qe->qe_pos.sp_offset);
+        key.size = sizeof(dbuf);
+        key.data = dbuf;
+
+        txn = db_new_txn(DB_TXN_WRITE_NOSYNC);
+
+        if (ret = se->se_q->del(se->se_q, txn, &key, 0))
+                if (ret != DB_NOTFOUND)
+                        panic("server: cannot write to q db: %s",
+                                db_strerror(ret));
+        if (ret = se->se_deferred->put(se->se_deferred, txn, &key, &data, 0))
+                panic("server: cannot write to deferred db: %s",
+                        db_strerror(ret));
+
+        txn->commit(txn, 0);
+        qefree(qe);
 }

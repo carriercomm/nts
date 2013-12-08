@@ -7,7 +7,6 @@
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/feeder.c,v 1.88 2012/01/16 00:23:54 river Exp $ */
 
 #include	<sys/types.h>
 #include	<sys/socket.h>
@@ -36,18 +35,16 @@
 static balloc_t	 *ba_fc;
 
 static feeder_t	*feeder_new(server_t *);
-static void	*feeder_thread(void *);
 static void	 feeder_log(int sev, feeder_t *fe, char const *fmt, ...)
 			attr_printf(3, 4);
 static void	 feeder_vlog(int sev, feeder_t *fe, char const *fmt, va_list);
 static void	 feeder_load(feeder_t *, int deferred);
-static void	 feeder_go(feeder_t *);
 
 static fconn_t	*fconn_new(feeder_t *);
-static int	 fconn_connect(fconn_t *);
-static int	 fconn_connect_done(fconn_t *, int);
-static int	 fconn_read(int fd, int what, void *udata);
-static int	 fconn_write(fconn_t *);
+static void	 fconn_connect(fconn_t *);
+static void	 fconn_connect_done(int fd, int what, void *udata);
+static void      fconn_err(int fd, int what, int err, void *udata);
+static void	 fconn_read(int fd, int what, void *udata);
 static void	 fconn_puts(fconn_t *, char const *text);
 static void	 fconn_printf(fconn_t *, char const *fmt, ...) attr_printf(2, 3);
 static void	 fconn_vprintf(fconn_t *, char const *fmt, va_list);
@@ -58,6 +55,7 @@ static void	 fconn_check(fconn_t *fe, qent_t *);
 static void	 fconn_takethis(fconn_t *fe, qent_t *);
 static void	 fconn_close(fconn_t *);
 static void	 fconn_adp_check(fconn_t *, int accepted);
+static void      fconn_dns_done(char const *name, int, address_list_t *, void *);
 
 static int	 fc_wait_greeting(fconn_t *, str_t);
 static int	 fc_sent_capabilities(fconn_t *, str_t);
@@ -105,8 +103,9 @@ feeder_new(se)
 {
 feeder_t	*fe;
 
+	assert(se);
 
-	fe = (feeder_t *) xcalloc(1, sizeof(*fe));
+	fe = xcalloc(1, sizeof(*fe));
 	fe->fe_server = se;
 	fe->fe_pending = hash_new(4096, NULL, NULL, NULL);
 
@@ -118,7 +117,7 @@ feeder_t	*fe;
 	return fe;
 }
 
-static int
+static void
 fconn_connect(fc)
 	fconn_t	*fc;
 {
@@ -126,113 +125,54 @@ char		 strname[1024 + NI_MAXHOST + NI_MAXSERV + 1];
 char		 host[NI_MAXHOST], serv[NI_MAXSERV];
 int		 ret;
 feeder_t	*fe = fc->fc_feeder;
-server_t	*se = fe->fe_server;
-int		 fd, one = 1;
+struct sockaddr	*bind = NULL;
+socklen_t	 bindlen = 0;
 
-	if (!fc->fc_addr) {
-	struct addrinfo	*ai, hints;
-	int		 ret;
-	char		 host[NI_MAXHOST], serv[NI_MAXSERV];
+        if (!fc->fc_addrs) {
+                fc->fc_state = FS_DNS;
+                dns_resolve(fe->fe_server->se_send_to, fe->fe_server->se_port,
+                            DNS_TYPE_ANY, fconn_dns_done, fc);
+                return;
+        }
 
-		if (fc->fc_addrs) {
-			freeaddrinfo(fc->fc_addrs);
-			fc->fc_addrs = NULL;
-		}
-
-		bzero(&hints, sizeof(hints));
-		hints.ai_socktype = SOCK_STREAM;
-#ifdef AI_ADDRCONIG
-		hints.ai_flags = AI_ADDRCONFIG;
-#endif
-
-		fc->fc_state = FS_DNS;
-
-		snprintf(host, sizeof(host), "%s", se->se_send_to);
-		snprintf(serv, sizeof(serv), "%s", se->se_port);
-		ret = getaddrinfo(host, serv, &hints, &ai);
-
-		if (ret) {
-			fconn_log(LOG_ERR, fc, "%s: cannot resolve: %s",
-					se->se_send_to, gai_strerror(ret));
-			return -1;
-		}
-
-		fc->fc_addr = fc->fc_addrs = ai;
-	}
+	if (!fc->fc_cur_addr)
+		fc->fc_cur_addr = SIMPLEQ_FIRST(fc->fc_addrs);
 
 	fc->fc_state = FS_CONNECT;
 
-	if (ret = getnameinfo(fc->fc_addr->ai_addr, fc->fc_addr->ai_addrlen,
-			host, sizeof(host), serv, sizeof(serv),
-			NI_NUMERICHOST | NI_NUMERICSERV)) {
-		feeder_log(LOG_ERR, fc->fc_feeder, "getnameinfo failed: %s",
-			gai_strerror(ret));
-		time(&fc->fc_feeder->fe_last_fail);
-		return -1;
-	}
+        if (ret = getnameinfo((struct sockaddr *) &fc->fc_cur_addr->ad_addr,
+                        fc->fc_cur_addr->ad_len,
+                        host, sizeof(host), serv, sizeof(serv),
+                        NI_NUMERICHOST | NI_NUMERICSERV)) {
+                nts_log(LOG_WARNING, "feeder: %s: getnameinfo failed: %s",
+                        fe->fe_server->se_name, gai_strerror(ret));
+                time(&fe->fe_server->se_feeder_last_fail);
+                fconn_close(fc);
+                return;
+        }
 
 	snprintf(strname, sizeof(strname), "[%s]:%s", host, serv);
 	free(fc->fc_strname);
 	fc->fc_strname = xstrdup(strname);
 
-	if ((fd = socket(fc->fc_addr->ai_family, fc->fc_addr->ai_socktype,
-					fc->fc_addr->ai_protocol)) == -1) {
-		feeder_log(LOG_ERR, fe, "socket: %s", strerror(errno));
-		return -1;
-	}
-	
-	ret = 0;
-	if (fc->fc_addr->ai_family == AF_INET && se->se_bind_v4.sin_family != 0) {
-		ret = bind(fd, (struct sockaddr *) &se->se_bind_v4, sizeof(se->se_bind_v4));
-	} else if (fc->fc_addr->ai_family == AF_INET6 && se->se_bind_v6.sin6_family != 0) {
-		ret = bind(fd, (struct sockaddr *) &se->se_bind_v6, sizeof(se->se_bind_v6));
-	}
+        if (fc->fc_cur_addr->ad_addr.ss_family == AF_INET &&
+            fe->fe_server->se_bind_v4.sin_family != 0) {
+                bind = (struct sockaddr *) &fe->fe_server->se_bind_v4;
+                bindlen = sizeof(fe->fe_server->se_bind_v4);
+        } else if (fc->fc_cur_addr->ad_addr.ss_family == AF_INET6 &&
+            fe->fe_server->se_bind_v6.sin6_family != 0) {
+                bind = (struct sockaddr *) &fe->fe_server->se_bind_v6;
+                bindlen = sizeof(fe->fe_server->se_bind_v6);
+        }
 
-	if (ret) {
-		feeder_log(LOG_ERR, fe, "bind: %s", strerror(errno));
-		close(fd);
-		return -1;
-	}
-
-	ret = connect(fd, fc->fc_addr->ai_addr, fc->fc_addr->ai_addrlen);
-
-	if (ret == -1) {
-		feeder_log(LOG_ERR, fe, "connect: %s", strerror(errno));
-		close(fd);
-		return -1;
-	}
-
-	net_set_nonblocking(fd);
-
-	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == -1) {
-		fconn_log(LOG_ERR, fc, "setsockopt(TCP_NODELAY): %s",
-			strerror(errno));
-		time(&fe->fe_last_fail);
-		close(fd);
-		return -1;
-	}
-
-#if 0
-	if (cf->feeder_send_buf) {
-	int	n = cf->feeder_send_buf;
-		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &n, sizeof(n)) == -1) {
-			fconn_log(LOG_ERR, fc, "setsockopt(SO_SNDBUF, %d): %s",
-				n, strerror(errno));
-			close(fd);
-			return -1;
-		}
-	}
-
-	if (cf->feeder_recv_buf) {
-	int	n = cf->feeder_recv_buf;
-		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &n, sizeof(n)) == -1) {
-			fconn_log(LOG_ERR, fc, "setsockopt(SO_RCVBUF, %d): %s",
-				n, strerror(errno));
-			close(fd);
-			return -1;
-		}
-	}
-#endif
+        net_connect(NET_DEFPRIO,
+                        (struct sockaddr *) &fc->fc_cur_addr->ad_addr,
+                        fc->fc_cur_addr->ad_len,
+                        bind, bindlen,
+                        fconn_connect_done,
+                        fconn_err,
+                        fconn_read,
+                        fc);
 
 #if 0
 	if (cf->log_connections)
@@ -241,13 +181,36 @@ int		 fd, one = 1;
 
 	fc->fc_state = FS_WAIT_GREETING;
 	time(&fc->fc_last_used);
-	return 0;
+	return;
+}
+
+static void
+fconn_connect_done(fd, what, udata)
+        void    *udata;
+{
+fconn_t		*fc = udata;
+feeder_t	*fe = fc->fc_feeder;
+int              one = 1;
+
+        if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == -1) {
+                fconn_log(LOG_ERR, fc, "setsockopt(TCP_NODELAY): %s",
+                        strerror(errno));
+                time(&fe->fe_server->se_feeder_last_fail);
+                fconn_close(fc);
+                return;
+        }
+
+        fconn_log(LOG_INFO, fc, "connected");
+
+        fc->fc_fd = fd;
+        fc->fc_state = FS_WAIT_GREETING;
+        time(&fc->fc_last_used);
 }
 
 /*
  * New data is available to read on a feeder connection.
  */
-static int
+static void
 fconn_read(fd, what, udata)
 	void	*udata;
 {
@@ -285,7 +248,7 @@ int		 n;
 		if (fconn_handlers[fc->fc_state](fc, line) == 1) {
 			time(&fe->fe_last_fail);
 			str_free(line);
-			return -1;
+			return;
 		}
 
 		/*
@@ -293,7 +256,7 @@ int		 n;
 		 * trying to read further data, we'll just get an error.
 		 */
 		if (fc->fc_flags & FC_DEAD)
-			return 0;
+			return;
 	}
 
 	/*
@@ -306,9 +269,9 @@ int		 n;
 #endif
 			fconn_log(LOG_INFO, fc, "read error: %s", errno ? strerror(errno) : "EOF");
 		time(&fc->fc_feeder->fe_last_fail);
-		return -1;
+		return;
 	}
-	return 0;
+	return;
 }
 
 /******
@@ -864,7 +827,7 @@ int i = 0;
 	bzero(&data, sizeof(data));
 	data.flags = DB_DBT_REALLOC;
 
-	txn = db_new_txn(0);
+	txn = db_new_txn(DB_TXN_WRITE_NOSYNC);
 	db->cursor(db, txn, &curs, 0);
 
 	/*
@@ -1005,8 +968,7 @@ qent_t		*qe;
 
 	TAILQ_REMOVE(&fc->fc_feeder->fe_conns, fc, fc_list);
 
-	if (fc->fc_addrs)
-		freeaddrinfo(fc->fc_addrs);
+	alist_free(fc->fc_addrs);
 
 	net_close(fc->fc_fd);
 	free(fc->fc_strname);
@@ -1058,4 +1020,48 @@ feeder_notify(fe)
 	feeder_t	*fe;
 {
 	feeder_load(fe, 0);
+}
+
+static void
+fconn_dns_done(name, err, alist, udata)
+        char const      *name;
+        address_list_t  *alist;
+        void            *udata;
+{
+fconn_t		*fc = udata;
+feeder_t        *fe = fc->fc_feeder;
+
+        if (err) {
+                nts_log(LOG_ERR, "feeder: %s: cannot resolve: %s",
+                        fe->fe_server->se_name,
+                        dns_strerror(err));
+                time(&fe->fe_server->se_feeder_last_fail);
+                fconn_close(fc);
+                return;
+        }
+
+        fc->fc_addrs = alist;
+        fconn_connect(fc);
+}
+
+static void
+fconn_err(fd, what, err, udata)
+	void	*udata;
+{
+fconn_t		*fc = udata;
+feeder_t	*fe = fc->fc_feeder;
+
+	if (fc->fc_fd == 0) {
+		fconn_log(LOG_INFO, fc, "connect: %s", strerror(err));
+		if (SIMPLEQ_NEXT(fc->fc_cur_addr, ad_list) == NULL)
+			fconn_log(LOG_INFO, fc, "out of addresses");
+		else {
+			fconn_connect(fc);
+			return;
+		}
+	} else
+		fconn_log(LOG_INFO, fc, "%s", err ? strerror(err) : "EOF");
+
+	time(&fe->fe_server->se_feeder_last_fail);
+	fconn_close(fc);
 }
