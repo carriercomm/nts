@@ -449,7 +449,7 @@ int	 first = 1;
 	double		score;
 
 		if (!txn)
-			txn = db_new_txn(0);
+			txn = db_new_txn(DB_TXN_WRITE_NOSYNC);
 
 		if (!curs) {
 			if (ret = sdb->cursor(sdb, txn, &curs, 0))
