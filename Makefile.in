@@ -9,7 +9,7 @@
 #
 # $Header: /cvsroot/nts/Makefile.in,v 1.18 2012/01/07 21:27:17 river Exp $
 
-
+VPATH		= @top_srcdir@
 prefix		= @prefix@
 exec_prefix	= @exec_prefix@
 bindir		= @bindir@
@@ -21,7 +21,7 @@ MAKEDEPEND	= @CC@ -MM
 INSTALL		= @INSTALL@
 CFLAGS		= @CFLAGS@
 LDFLAGS		= @LDFLAGS@
-CPPFLAGS	= @CPPFLAGS@	\
+CPPFLAGS	= @CPPFLAGS@ -I@top_srcdir@	\
 		  -DSYSCONFDIR=\"@sysconfdir@\"
 LIBS		= @LIBS@
 
@@ -71,12 +71,12 @@ install:
 	fi
 
 y.tab.c: parser.y
-	$(YACC) -d parser.y
+	$(YACC) -d @top_srcdir@/parser.y
 
 y.tab.h: y.tab.c
 
 lex.yy.c: lexer.l
-	$(LEX) lexer.l
+	$(LEX) @top_srcdir@/lexer.l
 
 lex.yy.o: lex.yy.c y.tab.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c lex.yy.c
