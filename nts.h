@@ -219,4 +219,31 @@ size_t strlcat(char *dst, const char *src, size_t size);
 #define	ARRAY_FOREACH(var, head)					\
 	for (var = ARRAY_FIRST(head); var; var = ARRAY_NEXT(head, var))	\
 
+/*
+ * Functions for (un)serializing data to byte buffers.  No attempt at error
+ * handling, type detection, etc; it just puts what you give it into the
+ * buffer.
+ *
+ * Format is a string consisting of a series of letters:
+ *
+ *      b               unsigned 8-bit integer (uint8_t)
+ *      i, I            signed 32 or 64-bit integer (int32_t, int64_t)
+ *      u, U            unsigned 32 or 64-bit integer (uint32_t, uint64_t)
+ *      f               double, stored as a fixed-point number to 4 d.p.
+ *                      (double)
+ *      s               string, null terminated (char *)
+ *      S               string, 4-byte length prefix (fray)
+ *
+ * For pack(), pass by value.  For unpack(), pass by pointer.
+ *
+ * Example:
+ *      unsigned char   buf[sizeof(uint32_t) + sizeof(uint64_t)];
+ *      uint32_t        i = 1;
+ *      uint64_t        j = 2;
+ *              pack(buf, "uU", i, j);
+ *              unpack(buf, "uU", &i, &j);
+ */
+void	pack(unsigned char *buf, char const *fmt, ...);
+void	unpack(unsigned char const *buf, char const *fmt, ...);
+
 #endif	/* !NTS_NTS_H */

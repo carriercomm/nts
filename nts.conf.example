@@ -513,6 +513,7 @@ filter-group "std" {
  */
 peer {
 	max-incoming-connections:	15;
+	max-outgoing-connections:	15;
 	outgoing-filters:		std;
 
 	/*

@@ -24,6 +24,7 @@
 #include	"nts.h"
 #include	"net.h"
 #include	"dns.h"
+#include	"feeder.h"
 
 static void	*peer_stanza_start(conf_stanza_t *, void *);
 static void	 peer_stanza_end(conf_stanza_t *, void *);
@@ -34,7 +35,8 @@ static void	 peer_set_exclude(conf_stanza_t *, conf_option_t *, void *, void *);
 static void	 peer_set_offer_filter(conf_stanza_t *, conf_option_t *, void *, void *);
 static void	 peer_set_incoming_filters(conf_stanza_t *, conf_option_t *, void *, void *);
 static void	 peer_set_outgoing_filters(conf_stanza_t *, conf_option_t *, void *, void *);
-static void	 peer_set_maxconns(conf_stanza_t *, conf_option_t *, void *, void *);
+static void	 peer_set_maxconns_in(conf_stanza_t *, conf_option_t *, void *, void *);
+static void	 peer_set_maxconns_out(conf_stanza_t *, conf_option_t *, void *, void *);
 static void	 peer_set_max_size(conf_stanza_t *, conf_option_t *, void *, void *);
 static void	 peer_set_host(conf_stanza_t *, conf_option_t *, void *, void *);
 static void	 peer_set_bind_address(conf_stanza_t *, conf_option_t *, void *, void *);
@@ -58,7 +60,8 @@ static config_schema_opt_t peer_opts[] = {
 	{ "exclude",			OPT_TYPE_STRING | OPT_LIST,		peer_set_exclude },
 	{ "incoming-filters",		OPT_TYPE_STRING | OPT_LIST,		peer_set_incoming_filters },
 	{ "outgoing-filters",		OPT_TYPE_STRING | OPT_LIST,		peer_set_outgoing_filters },
-	{ "max-incoming-connections",	OPT_TYPE_NUMBER,			peer_set_maxconns },
+	{ "max-incoming-connections",	OPT_TYPE_NUMBER,			peer_set_maxconns_in },
+	{ "max-outgoing-connections",	OPT_TYPE_NUMBER,			peer_set_maxconns_out },
 	{ "max-size",			OPT_TYPE_QUANTITY,			peer_set_max_size },
 	{ "host",			OPT_TYPE_STRING,			peer_set_host },
 	{ "offer-filter",		OPT_TYPE_STRING,			peer_set_offer_filter },
@@ -166,21 +169,37 @@ int		 ret;
 			dns_resolve(addr->hl_host, NULL, DNS_TYPE_ANY,
 				    server_resolve_done, se);
 
-		snprintf(dbname, sizeof(dbname), "backlog.%s.db", se->se_name);
+		snprintf(dbname, sizeof(dbname), "queue.%s.db", se->se_name);
 
-		if (ret = db_create(&se->se_backlog_db, db_env, 0))
-			panic("server: cannot create backlog database: %s",
-					db_strerror(ret));
+		if (ret = db_create(&se->se_q, db_env, 0))
+			panic("server: cannot create queue database: %s",
+				db_strerror(ret));
 
-		if (ret = se->se_backlog_db->set_bt_compare(se->se_backlog_db,
+		if (ret = se->se_q->set_bt_compare(se->se_q,
 					backlog_compare))
-			panic("server: cannot set backlog compare function: %s",
-					db_strerror(ret));
+			panic("server: cannot set queue compare function: %s",
+				db_strerror(ret));
 
-		if (ret = se->se_backlog_db->open(se->se_backlog_db, NULL, dbname,
+		if (ret = se->se_q->open(se->se_q, NULL, dbname,
 					NULL, DB_BTREE, DB_CREATE | DB_AUTO_COMMIT, 0))
-			panic("server: cannot open backlog database: %s",
-					db_strerror(ret));
+			panic("server: cannot open queue database: %s",
+				db_strerror(ret));
+
+		snprintf(dbname, sizeof(dbname), "defer.%s.db", se->se_name);
+
+		if (ret = db_create(&se->se_deferred, db_env, 0))
+			panic("server: cannot create defer database: %s",
+				db_strerror(ret));
+
+		if (ret = se->se_deferred->set_bt_compare(se->se_deferred,
+					backlog_compare))
+			panic("server: cannot set defer compare function: %s",
+				db_strerror(ret));
+
+		if (ret = se->se_deferred->open(se->se_deferred, NULL, dbname,
+					NULL, DB_BTREE, DB_CREATE | DB_AUTO_COMMIT, 0))
+			panic("server: cannot open defer database: %s",
+				db_strerror(ret));
 	}
 
 	rebuild_server_map();
@@ -250,11 +269,17 @@ server_t	*server = udata;
 		else
 			server->se_port = xstrdup("119");
 
-	if (!server->se_maxconns)
-		if (default_server && default_server->se_maxconns)
-			server->se_maxconns = default_server->se_maxconns;
+	if (!server->se_maxconns_in)
+		if (default_server && default_server->se_maxconns_in)
+			server->se_maxconns_in = default_server->se_maxconns_in;
 		else
-			server->se_maxconns = SERVER_MAXCONNS_DEFAULT;
+			server->se_maxconns_in = SERVER_MAXCONNS_DEFAULT;
+
+	if (!server->se_maxconns_out)
+		if (default_server && default_server->se_maxconns_out)
+			server->se_maxconns_out = default_server->se_maxconns_out;
+		else
+			server->se_maxconns_out = SERVER_MAXCONNS_DEFAULT;
 
 	if (!server->se_max_size && default_server && default_server->se_max_size)
 		server->se_max_size = default_server->se_max_size;
@@ -552,13 +577,23 @@ conf_val_t	*val;
 }
 
 static void
-peer_set_maxconns(stz, opt, udata, arg)
+peer_set_maxconns_in(stz, opt, udata, arg)
 	conf_stanza_t	*stz;
 	conf_option_t	*opt;
 	void		*udata, *arg;
 {
 server_t	*se = udata;
-	se->se_maxconns = opt->co_value->cv_number;
+	se->se_maxconns_in = opt->co_value->cv_number;
+}
+
+static void
+peer_set_maxconns_out(stz, opt, udata, arg)
+	conf_stanza_t	*stz;
+	conf_option_t	*opt;
+	void		*udata, *arg;
+{
+server_t	*se = udata;
+	se->se_maxconns_out = opt->co_value->cv_number;
 }
 
 static void
@@ -758,37 +793,11 @@ hostlist_entry_t	*hl;
 }
 
 void
-server_add_backlog(se, art, txn)
-	server_t	*se;
-	article_t	*art;
-	DB_TXN		*txn;
-{
-DBT	 key, data;
-int	 ret;
-char	 dbuf[sizeof(uint32_t) + sizeof(uint64_t)];
-
-	bzero(&key, sizeof(key));
-	bzero(&data, sizeof(data));
-
-	int32put(dbuf, art->art_spool_pos.sp_id);
-	int64put(dbuf + sizeof(uint32_t), art->art_spool_pos.sp_offset);
-	key.data = dbuf;
-	key.size = sizeof(dbuf);
-
-	if (ret = se->se_backlog_db->put(se->se_backlog_db,
-			txn, &key, &data, 0))
-		panic("server: cannot write to backlog db: %s",
-			db_strerror(ret));
-}
-
-void
 server_shutdown()
 {
 server_t	*se;
 
 	SLIST_FOREACH(se, &servers, se_list) {
-		if (se->se_backlog_db)
-			se->se_backlog_db->close(se->se_backlog_db, 0);
 	}
 }
 
@@ -839,35 +848,67 @@ server_t	*se;
 	}
 }
 
-int
-server_has_backlog(se)
-	server_t	*se;
+void
+server_notify_article(art)
+	article_t	*art;
 {
-DBT	 key, data;
-DBC	*curs;
-DB	*db = se->se_backlog_db;
-char	 kbuf[sizeof(uint32_t) + sizeof(uint64_t)];
-int	 ret;
+server_t	*se;
+DB_TXN		*txn;
+int		 ret;
+	
+	art->art_refs = 0;
 
-	bzero(&key, sizeof(key));
-	bzero(&data, sizeof(data));
-	key.ulen = sizeof(kbuf);
-	key.flags = DB_DBT_USERMEM;
-	key.data = kbuf;
+	txn = db_new_txn(0);
 
-	if (ret = db->cursor(db, NULL, &curs, 0))
-		panic("cannot create cursor to backlog database: %s",
-		      db_strerror(ret));
+	SLIST_FOREACH(se, &servers, se_list) {
+		if (!se->se_send_to || !server_wants_article(se, art))
+			continue;
 
-	if (ret = curs->get(curs, &key, &data, DB_FIRST)) {
-		if (ret == DB_NOTFOUND) {
-			curs->close(curs);
-			return 0;
-		}
-		panic("cannot read from backlog database: %s",
-		      db_strerror(ret));
+		server_addq(se, art, txn);
 	}
 
-	curs->close(curs);
-	return 1;
+	if (ret = txn->commit(txn, 0))
+		panic("server: cannot commit backlog txn: %s", db_strerror(ret));
+
+	SLIST_FOREACH(se, &servers, se_list) {
+		if (!se->se_send_to || !server_wants_article(se, art))
+			continue;
+		feeder_notify(se->se_feeder);
+	}
+}
+
+void
+server_addq(server_t *se, article_t *art, DB_TXN *txn)
+{
+DBT              key, data;
+int              ret;
+unsigned char    dbuf[4 + 8];
+
+        bzero(&key, sizeof(key));
+        pack(dbuf, "uU", art->art_spool_pos.sp_id,
+                         art->art_spool_pos.sp_offset);
+        key.size = sizeof(dbuf);
+        key.data = dbuf;
+
+        bzero(&data, sizeof(data));
+	data.size = str_length(art->art_msgid);
+	data.data = str_begin(art->art_msgid);
+
+        if (ret = se->se_q->put(se->se_q, txn, &key, &data, 0))
+                panic("server: cannot write to q db: %s",
+                        db_strerror(ret));
+}
+
+qent_t *
+qealloc()
+{
+qent_t	*qe = xcalloc(1, sizeof(*qe));
+}               
+
+void
+qefree(qe)
+	qent_t	*qe;
+{
+	str_free(qe->qe_msgid);
+	free(qe);
 }

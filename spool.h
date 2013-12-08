@@ -14,6 +14,8 @@
 
 #include	<inttypes.h>
 
+#include	"str.h"
+
 struct article;
 
 typedef uint32_t spool_id_t;
@@ -23,6 +25,17 @@ typedef struct spool_pos {
 	spool_id_t	sp_id;
 	spool_offset_t	sp_offset;
 } spool_pos_t;
+
+typedef struct spool_header {
+	uint32_t	sa_magic;
+	uint32_t	sa_len;
+	uint8_t		sa_hdr_len;
+	uint32_t	sa_flags;
+	double		sa_emp_score;
+	double		sa_phl_score;
+	uint64_t	sa_crc;
+	uint32_t	sa_text_len;
+} spool_header_t;
 
 int	spool_init(void);
 int	spool_run(void);
@@ -53,6 +66,7 @@ int	spool_check(void);
  * Fetch an article from the spool.
  */
 struct article	*spool_fetch(spool_id_t, spool_offset_t);
+int		 spool_fetch_text(spool_id_t, spool_offset_t, spool_header_t *hdr, str_t*);
 void		 spool_get_cur_pos(spool_pos_t *);
 
 void	spool_shutdown(void);

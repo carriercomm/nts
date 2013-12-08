@@ -1,13 +1,13 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011, 2012 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/feeder.c,v 1.56 2012/01/10 17:14:13 river Exp $ */
+/* $Header: /cvsroot/nts/feeder.c,v 1.88 2012/01/16 00:23:54 river Exp $ */
 
 #include	<sys/types.h>
 #include	<sys/socket.h>
@@ -20,6 +20,7 @@
 #include	<stdio.h>
 #include	<stdarg.h>
 #include	<assert.h>
+#include	<ctype.h>
 
 #include	"feeder.h"
 #include	"nts.h"
@@ -29,65 +30,73 @@
 #include	"spool.h"
 #include	"balloc.h"
 #include	"dns.h"
+#include	"config.h"
+#include	"hash.h"
 
-static balloc_t	 *ba_ae;
-static balloc_t	 *ba_fe;
+static balloc_t	 *ba_fc;
 
 static feeder_t	*feeder_new(server_t *);
-static void	 feeder_connect(feeder_t *);
-static void	 feeder_connect_done(int fd, int what, void *udata);
-static void	 feeder_err(int fd, int what, int err, void *udata);
-static void	 feeder_read(int fd, int what, void *udata);
-static void	 feeder_printf(feeder_t *, char const *fmt, ...) attr_printf(2, 3);
-static void	 feeder_vprintf(feeder_t *, char const *fmt, va_list);
+static void	*feeder_thread(void *);
 static void	 feeder_log(int sev, feeder_t *fe, char const *fmt, ...)
 			attr_printf(3, 4);
 static void	 feeder_vlog(int sev, feeder_t *fe, char const *fmt, va_list);
-static void	 feeder_check(feeder_t *fe, article_entry_t *ae);
-static void	 feeder_takethis(feeder_t *fe, article_entry_t *ae);
-static void	 feeder_resend_backlog(void *);
-static void	 feeder_load_backlog(feeder_t *);
+static void	 feeder_load(feeder_t *, int deferred);
 static void	 feeder_go(feeder_t *);
-static void	 feeder_close(feeder_t *);
-static void	 feeder_remove_backlog(feeder_t *, article_t *);
-static void	 feeder_adp_check(feeder_t *, int accepted);
-static void	 feeder_dns_done(char const *name, int, address_list_t *, void *);
-static void	 feeder_close_impl(void *);
 
-static int	 fe_connect(feeder_t *, str_t);
-static int	 fe_wait_greeting(feeder_t *, str_t);
-static int	 fe_sent_capabilities(feeder_t *, str_t);
-static int	 fe_read_capabilities(feeder_t *, str_t);
-static int	 fe_sent_mode_stream(feeder_t *, str_t);
-static int	 fe_running(feeder_t *, str_t);
+static fconn_t	*fconn_new(feeder_t *);
+static int	 fconn_connect(fconn_t *);
+static int	 fconn_connect_done(fconn_t *, int);
+static int	 fconn_read(int fd, int what, void *udata);
+static int	 fconn_write(fconn_t *);
+static void	 fconn_puts(fconn_t *, char const *text);
+static void	 fconn_printf(fconn_t *, char const *fmt, ...) attr_printf(2, 3);
+static void	 fconn_vprintf(fconn_t *, char const *fmt, va_list);
+static void	 fconn_log(int sev, fconn_t *fe, char const *fmt, ...)
+			attr_printf(3, 4);
+static void	 fconn_vlog(int sev, fconn_t *fe, char const *fmt, va_list);
+static void	 fconn_check(fconn_t *fe, qent_t *);
+static void	 fconn_takethis(fconn_t *fe, qent_t *);
+static void	 fconn_close(fconn_t *);
+static void	 fconn_adp_check(fconn_t *, int accepted);
 
-static int (*feeder_handlers[]) (feeder_t *, str_t) = {
-	NULL,
-	fe_connect,
-	fe_wait_greeting,
-	fe_sent_capabilities,
-	fe_read_capabilities,
-	fe_sent_mode_stream,
-	fe_running
+static int	 fc_wait_greeting(fconn_t *, str_t);
+static int	 fc_sent_capabilities(fconn_t *, str_t);
+static int	 fc_read_capabilities(fconn_t *, str_t);
+static int	 fc_sent_mode_stream(fconn_t *, str_t);
+static int	 fc_running(fconn_t *, str_t);
+/* }}} */
+
+static int (*fconn_handlers[]) (fconn_t *, str_t) = {
+	NULL,	/* DNS */
+	NULL,	/* CONNECT */
+	fc_wait_greeting,
+	fc_sent_capabilities,
+	fc_read_capabilities,
+	fc_sent_mode_stream,
+	fc_running
 };
-
-#define MAXQ	35
 
 int
 feeder_init()
 {
-	ba_fe = balloc_new(sizeof(feeder_t), 64, "feeder");
-	ba_ae = balloc_new(sizeof(article_entry_t), 512, "article_entry");
+	ba_fc = balloc_new(sizeof(fconn_t), 64, "fconn");
 	return 0;
 }
 
 int
 feeder_run()
 {
-#if 1
-	net_cron(30, feeder_resend_backlog, NULL);
-#endif
+server_t	*se;
+	SLIST_FOREACH(se, &servers, se_list) {
+		se->se_feeder = feeder_new(se);
+	}
+
 	return 0;
+}
+
+void
+feeder_shutdown()
+{
 }
 
 static feeder_t *
@@ -96,328 +105,341 @@ feeder_new(se)
 {
 feeder_t	*fe;
 
-	fe = bzalloc(ba_fe);
 
-	fe->fe_strname = xstrdup(se->se_name);
+	fe = (feeder_t *) xcalloc(1, sizeof(*fe));
 	fe->fe_server = se;
+	fe->fe_pending = hash_new(4096, NULL, NULL, NULL);
 
-	SIMPLEQ_INIT(&fe->fe_send_queue);
+	TAILQ_INIT(&fe->fe_conns);
 
 	if (se->se_adp_hi == 0)
 		fe->fe_flags |= FE_ADP;
 
-	fe->fe_waiting_hash = hash_new(128, NULL, NULL, NULL);
-	fe->fe_type = FT_BACKLOG;
 	return fe;
 }
 
-static void
-feeder_dns_done(name, err, alist, udata)
-	char const	*name;
-	address_list_t	*alist;
-	void		*udata;
-{
-feeder_t	*fe = udata;
-
-	if (err) {
-		nts_log(LOG_ERR, "feeder: %s: cannot resolve: %s",
-			fe->fe_server->se_name,
-			dns_strerror(err));
-		time(&fe->fe_server->se_feeder_last_fail);
-		feeder_close(fe);
-		return;
-	}
-
-	fe->fe_addrs = alist;
-	feeder_connect(fe);
-}
-
-static void
-feeder_connect(fe)
-	feeder_t	*fe;
+static int
+fconn_connect(fc)
+	fconn_t	*fc;
 {
 char		 strname[1024 + NI_MAXHOST + NI_MAXSERV + 1];
 char		 host[NI_MAXHOST], serv[NI_MAXSERV];
-struct sockaddr	*bind = NULL;
-socklen_t	 bindlen = 0;
 int		 ret;
+feeder_t	*fe = fc->fc_feeder;
+server_t	*se = fe->fe_server;
+int		 fd, one = 1;
 
-	if (!fe->fe_addrs) {
-		fe->fe_state = FS_DNS;
-		dns_resolve(fe->fe_server->se_send_to, fe->fe_server->se_port,
-			    DNS_TYPE_ANY, feeder_dns_done, fe);
-		return;
+	if (!fc->fc_addr) {
+	struct addrinfo	*ai, hints;
+	int		 ret;
+	char		 host[NI_MAXHOST], serv[NI_MAXSERV];
+
+		if (fc->fc_addrs) {
+			freeaddrinfo(fc->fc_addrs);
+			fc->fc_addrs = NULL;
+		}
+
+		bzero(&hints, sizeof(hints));
+		hints.ai_socktype = SOCK_STREAM;
+#ifdef AI_ADDRCONIG
+		hints.ai_flags = AI_ADDRCONFIG;
+#endif
+
+		fc->fc_state = FS_DNS;
+
+		snprintf(host, sizeof(host), "%s", se->se_send_to);
+		snprintf(serv, sizeof(serv), "%s", se->se_port);
+		ret = getaddrinfo(host, serv, &hints, &ai);
+
+		if (ret) {
+			fconn_log(LOG_ERR, fc, "%s: cannot resolve: %s",
+					se->se_send_to, gai_strerror(ret));
+			return -1;
+		}
+
+		fc->fc_addr = fc->fc_addrs = ai;
 	}
 
-	if (fe->fe_cur_addr)
-		fe->fe_cur_addr = SIMPLEQ_NEXT(fe->fe_cur_addr, ad_list);
-	if (fe->fe_cur_addr == NULL)
-		fe->fe_cur_addr = SIMPLEQ_FIRST(fe->fe_addrs);
+	fc->fc_state = FS_CONNECT;
 
-	fe->fe_state = FS_CONNECT;
-
-	if (ret = getnameinfo((struct sockaddr *) &fe->fe_cur_addr->ad_addr, 
-			fe->fe_cur_addr->ad_len,
+	if (ret = getnameinfo(fc->fc_addr->ai_addr, fc->fc_addr->ai_addrlen,
 			host, sizeof(host), serv, sizeof(serv),
 			NI_NUMERICHOST | NI_NUMERICSERV)) {
-		nts_log(LOG_WARNING, "feeder: %s: getnameinfo failed: %s",
-			fe->fe_server->se_name, gai_strerror(ret));
-		time(&fe->fe_server->se_feeder_last_fail);
-		feeder_close(fe);
-		return;
+		feeder_log(LOG_ERR, fc->fc_feeder, "getnameinfo failed: %s",
+			gai_strerror(ret));
+		time(&fc->fc_feeder->fe_last_fail);
+		return -1;
 	}
 
 	snprintf(strname, sizeof(strname), "[%s]:%s", host, serv);
-	free(fe->fe_strname);
-	fe->fe_strname = xstrdup(strname);
+	free(fc->fc_strname);
+	fc->fc_strname = xstrdup(strname);
 
-	if (fe->fe_cur_addr->ad_addr.ss_family == AF_INET &&
-	    fe->fe_server->se_bind_v4.sin_family != 0) {
-		bind = (struct sockaddr *) &fe->fe_server->se_bind_v4;
-		bindlen = sizeof(fe->fe_server->se_bind_v4);
-	} else if (fe->fe_cur_addr->ad_addr.ss_family == AF_INET6 &&
-	    fe->fe_server->se_bind_v6.sin6_family != 0) {
-		bind = (struct sockaddr *) &fe->fe_server->se_bind_v6;
-		bindlen = sizeof(fe->fe_server->se_bind_v6);
+	if ((fd = socket(fc->fc_addr->ai_family, fc->fc_addr->ai_socktype,
+					fc->fc_addr->ai_protocol)) == -1) {
+		feeder_log(LOG_ERR, fe, "socket: %s", strerror(errno));
+		return -1;
+	}
+	
+	ret = 0;
+	if (fc->fc_addr->ai_family == AF_INET && se->se_bind_v4.sin_family != 0) {
+		ret = bind(fd, (struct sockaddr *) &se->se_bind_v4, sizeof(se->se_bind_v4));
+	} else if (fc->fc_addr->ai_family == AF_INET6 && se->se_bind_v6.sin6_family != 0) {
+		ret = bind(fd, (struct sockaddr *) &se->se_bind_v6, sizeof(se->se_bind_v6));
 	}
 
-	net_connect(NET_DEFPRIO,
-			(struct sockaddr *) &fe->fe_cur_addr->ad_addr,
-			fe->fe_cur_addr->ad_len,
-			bind, bindlen,
-			feeder_connect_done,
-			feeder_err,
-			feeder_read,
-			fe);
-}
+	if (ret) {
+		feeder_log(LOG_ERR, fe, "bind: %s", strerror(errno));
+		close(fd);
+		return -1;
+	}
 
-static void
-feeder_connect_done(fd, what, udata)
-	void	*udata;
-{
-feeder_t	*fe = udata;
-int		 one = 1;
+	ret = connect(fd, fc->fc_addr->ai_addr, fc->fc_addr->ai_addrlen);
+
+	if (ret == -1) {
+		feeder_log(LOG_ERR, fe, "connect: %s", strerror(errno));
+		close(fd);
+		return -1;
+	}
+
+	net_set_nonblocking(fd);
 
 	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == -1) {
-		feeder_log(LOG_ERR, fe, "setsockopt(TCP_NODELAY): %s",
+		fconn_log(LOG_ERR, fc, "setsockopt(TCP_NODELAY): %s",
 			strerror(errno));
-		time(&fe->fe_server->se_feeder_last_fail);
-		feeder_close(fe);
-		return;
+		time(&fe->fe_last_fail);
+		close(fd);
+		return -1;
 	}
 
-	feeder_log(LOG_INFO, fe, "connected");
-
-	fe->fe_fd = fd;
-	fe->fe_state = FS_WAIT_GREETING;
-	time(&fe->fe_last_used);
-}
-
-static void
-feeder_err(fd, what, err, udata)
-	void	*udata;
-{
-feeder_t	*fe = udata;
-
-	if (fe->fe_fd == 0) {
-		feeder_log(LOG_INFO, fe, "connect: %s", strerror(err));
-		if (SIMPLEQ_NEXT(fe->fe_cur_addr, ad_list) == NULL)
-			feeder_log(LOG_INFO, fe, "out of addresses");
-		else {
-			feeder_connect(fe);
-			return;
-		}
-	} else
-		feeder_log(LOG_INFO, fe, "%s", err ? strerror(err) : "EOF");
-
-	time(&fe->fe_server->se_feeder_last_fail);
-	feeder_close(fe);
-}
-
-void
-feeder_notify_article(art)
-	article_t	*art;
-{
-server_t	*se;
-DB_TXN		*txn;
-int		 ret;
-	
-	art->art_refs = 0;
-
-	txn = db_new_txn(0);
-
-	SLIST_FOREACH(se, &servers, se_list) {
-	feeder_t	*fe = se->se_feeder;
-
-		if (!se->se_send_to || !server_wants_article(se, art))
-			continue;
-
-		server_add_backlog(se, art, txn);
-
-		if (!fe) {
-			if (se->se_feeder_last_fail + 60 > time(NULL))
-				continue;
-
-			se->se_feeder = feeder_new(se);
-			feeder_connect(se->se_feeder);
-			continue;
-		}
-
-		if (fe->fe_state < FS_RUNNING || fe->fe_type != FT_REALTIME)
-			continue;
-
-		if (SIMPLEQ_EMPTY(&fe->fe_send_queue)) {
-		article_entry_t	*ae;
-
-			ae = bzalloc(ba_ae);
-			++art->art_refs;
-			++fe->fe_send_queue_size;
-			ae->ae_article = art;
-			SIMPLEQ_INSERT_TAIL(&fe->fe_send_queue, ae, ae_list);
-			feeder_go(fe);
+#if 0
+	if (cf->feeder_send_buf) {
+	int	n = cf->feeder_send_buf;
+		if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &n, sizeof(n)) == -1) {
+			fconn_log(LOG_ERR, fc, "setsockopt(SO_SNDBUF, %d): %s",
+				n, strerror(errno));
+			close(fd);
+			return -1;
 		}
 	}
 
-	if (ret = txn->commit(txn, 0))
-		panic("cannot commit backlog txn: %s", db_strerror(ret));
+	if (cf->feeder_recv_buf) {
+	int	n = cf->feeder_recv_buf;
+		if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &n, sizeof(n)) == -1) {
+			fconn_log(LOG_ERR, fc, "setsockopt(SO_RCVBUF, %d): %s",
+				n, strerror(errno));
+			close(fd);
+			return -1;
+		}
+	}
+#endif
+
+#if 0
+	if (cf->log_connections)
+#endif
+		fconn_log(LOG_INFO, fc, "connected");
+
+	fc->fc_state = FS_WAIT_GREETING;
+	time(&fc->fc_last_used);
+	return 0;
 }
 
-static void
-feeder_read(fd, what, udata)
+/*
+ * New data is available to read on a feeder connection.
+ */
+static int
+fconn_read(fd, what, udata)
 	void	*udata;
 {
-feeder_t	*fe = udata;
+fconn_t		*fc = udata;
+feeder_t	*fe = fc->fc_feeder;
 str_t		 line;
 int		 n;
 
-	while ((n = net_readline(fe->fe_fd, &line)) == 1) {
+	/*
+	 * Read lines from the connection until there are none left, or an
+	 * error occurs.
+	 */
+	while ((n = net_readline(fd, &line)) == 1) {
+		/*
+		 * Ignore empty lines -- altough perhaps we should close the
+		 * connection here, as there shouldn't be any.
+		 */
 		if (str_length(line) == 0) {
 			str_free(line);
 			continue;
 		}
 
-		if (feeder_handlers[fe->fe_state](fe, line) == 1) {
+		/*
+		 * Dispatch the command to the handler for this state.  If the
+		 * handler returns 1, an error occurred and we should close the
+		 * connection.  Errors here are always fatal, so update the
+		 * last error time.
+		 *
+		 * NULL handler means we shouldn't receive any data in this
+		 * state (i.e., we're not connected yet), so abort.
+		 */
+		if (fconn_handlers[fc->fc_state] == NULL)
+			abort();
+
+		if (fconn_handlers[fc->fc_state](fc, line) == 1) {
+			time(&fe->fe_last_fail);
 			str_free(line);
-			feeder_close(fe);
-			return;
+			return -1;
 		}
 
-		str_free(line);
-
-		if (fe->fe_flags & FE_DEAD)
-			return;
+		/*
+		 * dead is set when a write error occurs; there's no point
+		 * trying to read further data, we'll just get an error.
+		 */
+		if (fc->fc_flags & FC_DEAD)
+			return 0;
 	}
 
+	/*
+	 * Close the connection if an error occurred reading data.  Update the
+	 * last fail time so we don't reconnect too soon.
+	 */
 	if (n == -1) {
-		feeder_log(LOG_INFO, fe, "read error: %s", errno ? strerror(errno) : "EOF");
-		time(&fe->fe_server->se_feeder_last_fail);
-		feeder_close(fe);
-	}
-}
-
-static int 
-fe_connect(fe, line)
-	feeder_t	*fe;
-	str_t		 line;
-{
-	abort();
-}
-
-static int
-fe_wait_greeting(fe, line)
-	feeder_t	*fe;
-	str_t		 line;
-{
-	if (str_index(line, 0) != '2') {
-		feeder_log(LOG_ERR, fe, "connection rejected: %.*s",
-			str_printf(line));
-		time(&fe->fe_server->se_feeder_last_fail);
-		return 1;
-	} else {
-		feeder_printf(fe, "MODE STREAM\r\n");
-		fe->fe_state = FS_SENT_MODE_STREAM;
+#if 0
+		if (cf->log_connections)
+#endif
+			fconn_log(LOG_INFO, fc, "read error: %s", errno ? strerror(errno) : "EOF");
+		time(&fc->fc_feeder->fe_last_fail);
+		return -1;
 	}
 	return 0;
 }
 
+/******
+ * fconn_t state handlers.
+ */
+
+/*
+ * Waiting for the initial server greeting.  Accept any 2xx code as valid
+ * (even 201), but anything else is an error.  Send MODE STREAM after the
+ * greeting.
+ */
 static int
-fe_sent_capabilities(fe, line)
-	feeder_t	*fe;
-	str_t		 line;
+fc_wait_greeting(fc, line)
+	fconn_t	*fc;
+	str_t	 line;
+{
+	if (str_index(line, 0) != '2') {
+		fconn_log(LOG_ERR, fc, "connection rejected: %.*s",
+			str_printf(line));
+		return 1;
+	} else {
+		fconn_puts(fc, "MODE STREAM\r\n");
+		fc->fc_state = FS_SENT_MODE_STREAM;
+	}
+	return 0;
+}
+
+/*
+ * We sent MODE STREAM, this is the reply.  If the server agrees to streaming,
+ * go straight to running mode.  Otherwise, try to probe streaming support
+ * via CAPABILITIES.  We do MODE STREAM first because some servers (e.g.
+ * Cyclone) will close the connection when a CAPABILITIES command is
+ * received.
+ */
+static int
+fc_sent_mode_stream(fc, line)
+	fconn_t	*fc;
+	str_t	 line;
+{
+str_t	resp;
+
+	if (!(resp = str_next_word(line))) {
+		fconn_log(LOG_INFO, fc, "invalid response to MODE STREAM");
+		return 1;
+	}
+
+	if (!str_equal_c(resp, "203")) {
+		fconn_puts(fc, "CAPABILITIES\r\n");
+		fc->fc_state = FS_SENT_CAPABILITIES;
+		return 0;
+	}
+
+	fc->fc_mode = FM_STREAM;
+#if 0
+	if (cf->log_connections)
+#endif
+		fconn_log(LOG_INFO, fc, "running: %s mode",
+			fc->fc_mode == FM_STREAM ? "streaming" : "IHAVE");
+	fc->fc_state = FS_RUNNING;
+	feeder_notify(fc->fc_feeder);
+
+	return 0;
+}
+
+/*
+ * We sent CAPABILITIES, this should be the 101 response.  We already tried
+ * MODE STREAM, so if we don't get streaming support here either, we must be
+ * using IHAVE mode.
+ */
+static int
+fc_sent_capabilities(fc, line)
+	fconn_t	*fc;
+	str_t	 line;
 {
 str_t	resp;
 	
-	if ((resp = str_next_word(line)) == NULL) {
-		feeder_log(LOG_INFO, fe, "invalid response to CAPABILITIES");
-		time(&fe->fe_server->se_feeder_last_fail);
+	if (!(resp = str_next_word(line))) {
+		fconn_log(LOG_INFO, fc, "invalid response to CAPABILITIES");
 		return 1;
 	}
 
 	if (!str_equal_c(resp, "101")) {
-		fe->fe_state = FS_RUNNING;
-		feeder_log(LOG_INFO, fe, "running: IHAVE mode");
-		feeder_go(fe);
+		fc->fc_state = FS_RUNNING;
+#if 0
+		if (cf->log_connections)
+#endif
+			fconn_log(LOG_INFO, fc, "running: IHAVE mode");
+		feeder_notify(fc->fc_feeder);
 	} else
-		fe->fe_state = FS_READ_CAPABILITIES;
+		fc->fc_state = FS_READ_CAPABILITIES;
 
-	str_free(resp);
 	return 0;
 }
 
+/*
+ * Reading the CAPABILITIES response; one per line, termined with a ".".
+ */
 static int
-fe_read_capabilities(fe, line)
-	feeder_t	*fe;
-	str_t		 line;
+fc_read_capabilities(fc, line)
+	fconn_t	*fc;
+	str_t	 line;
 {
 str_t	cap;
-	if ((cap = str_next_word(line)) == NULL)
+
+	if (!(cap = str_next_word(line)))
 		/* Empty line, just ignore it. */
 		return 0;
 
+		
 	if (str_equal_c(cap, ".")) {
-		feeder_log(LOG_INFO, fe, "running: %s mode",
-			fe->fe_mode == FM_STREAM ? "streaming" : "IHAVE");
-		fe->fe_state = FS_RUNNING;
-		feeder_go(fe);
+#if 0
+		if (cf->log_connections)
+#endif
+			fconn_log(LOG_INFO, fc, "running: %s mode",
+				fc->fc_mode == FM_STREAM ? "streaming" : "IHAVE");
+		fc->fc_state = FS_RUNNING;
+		feeder_notify(fc->fc_feeder);
 	} else if (str_equal_c(cap, "STREAMING"))
-		fe->fe_mode = FM_STREAM;
+		fc->fc_mode = FM_STREAM;
 
-	str_free(cap);
 	return 0;
 }
 
+/*
+ * We're done with negotiation and received a line, which must be a reply
+ * to a CHECK, TAKETHIS or IHAVE command we sent.
+ */
 static int
-fe_sent_mode_stream(fe, line)
-	feeder_t	*fe;
-	str_t		 line;
-{
-str_t	resp;
-
-	if ((resp = str_next_word(line)) == NULL) {
-		feeder_log(LOG_INFO, fe, "invalid response to MODE STREAM");
-		time(&fe->fe_server->se_feeder_last_fail);
-		return 1;
-	}
-
-	if (str_equal_c(resp, "203")) {
-		fe->fe_mode = FM_STREAM;
-		feeder_log(LOG_INFO, fe, "running: %s mode",
-			fe->fe_mode == FM_STREAM ? "streaming" : "IHAVE");
-		fe->fe_state = FS_RUNNING;
-		feeder_go(fe);
-	} else {
-		feeder_printf(fe, "CAPABILITIES\r\n");
-		fe->fe_state = FS_SENT_CAPABILITIES;
-	}
-
-	str_free(resp);
-	return 0;
-}
-
-static int
-fe_running(fe, line)
-	feeder_t	*fe;
-	str_t		 line;
+fc_running(fc, line)
+	fconn_t	*fc;
+	str_t	 line;
 {
 	/*
 	 * 238 <msg-id>	-- CHECK, send the article
@@ -426,113 +448,178 @@ fe_running(fe, line)
 	 * 239 <msg-id>	-- TAKETHIS, accepted
 	 * 439 <msg-id>	-- TAKETHIS, rejected
 	 */
-str_t		 resps = NULL, msgid = NULL;
-int		 resp;
-article_entry_t	*ae;
-article_t	*art;
+str_t	 resps = NULL,  msgid = NULL;
+int	 resp;
+qent_t	*qe;
 
-	if ((resps = str_next_word(line)) == NULL) {
-		feeder_log(LOG_INFO, fe, "invalid response from command");
-		time(&fe->fe_server->se_feeder_last_fail);
+	time(&fc->fc_last_used);
+
+	/*
+	 * Extract a valid response code and message-id from the server.
+	 */
+	if (!(resps = str_next_word(line))) {
+		fconn_log(LOG_INFO, fc, "invalid response from command [%.*s]",
+			  str_printf(line));
 		return 1;
 	}
 
 	if (str_length(resps) != 3) {
-		str_free(resps);
-		feeder_log(LOG_INFO, fe, "invalid response from command");
-		time(&fe->fe_server->se_feeder_last_fail);
-		return 1;
+		/*
+		 * INN <= 2.5.2 has a bug where it sometimes writes a single
+		 * junk character after a reply's \r\n.  This shows up as a
+		 * reply of the form "y438 <...".  Detect this and work
+		 * around it.
+		 */
+		if (
+#if 0
+		fc->feeder->server->inn_workaround &&
+#endif
+		    str_length(resps) == 4 &&
+		    isdigit(str_index(resps, 1)) &&
+		    isdigit(str_index(resps, 2)) &&
+		    isdigit(str_index(resps, 3))) {
+			str_remove_start(resps, 1);
+		} else {
+			fconn_log(LOG_INFO, fc, "invalid response from command [%.*s%.*s]",
+				  str_printf(resps), str_printf(line));
+			str_free(resps);
+			return 1;
+		}
 	}
 
 	resp = (str_index(resps, 0) - '0') * 100
 		+ (str_index(resps, 1) - '0') * 10
 		+ (str_index(resps, 2) - '0');
 	str_free(resps);
+	resps = NULL;
 
-	if ((msgid = str_next_word(line)) == NULL) {
-		feeder_log(LOG_INFO, fe, "invalid response from command");
-		time(&fe->fe_server->se_feeder_last_fail);
+	/*
+	 * Make sure the response code is one that we recognise.  Codes that
+	 * aren't handled here include 400 (for temporary failure) which
+	 * e.g. INN sends after TAKETHIS when the server is paused.  For that,
+	 * pausing and reconnecting later is fine.
+	 *
+	 * At the moment we don't handle 501.  The most reasonable thing
+	 * to do here is probably to treat it as a reject for the last sent
+	 * CHECK or TAKETHIS.
+	 */
+
+	if (resp != 238 && resp != 431 && resp != 438 && resp != 239 &&
+	    resp != 439) {
+		/*
+		 * Unrecognised response code, close the connection.
+		 */
+		fconn_log(LOG_NOTICE, fc, "unrecognised response "
+				"to command: %d %.*s", resp,
+				str_printf(line));
 		return 1;
 	}
 
-	if (resp == 238 || resp == 431 || resp == 438 || resp == 239 || resp == 439) {
-		if (!(ae = hash_remove(fe->fe_waiting_hash,
-				str_begin(msgid), str_length(msgid)))) {
-			time(&fe->fe_server->se_feeder_last_fail);
-			feeder_log(LOG_INFO, fe, "received %d response for "
-					"unexpected message-id %.*s",
-					resp, str_printf(msgid));
-			str_free(msgid);
-			return 1;
-		}
-	} else {
-		time(&fe->fe_server->se_feeder_last_fail);
-		feeder_log(LOG_NOTICE, fe, "unrecognised response "
-				"to command: %d %.*s %.*s",
-				resp, str_printf(msgid), str_printf(line));
+	/*
+	 * Extract a valid message-id, and make sure it matches one of the
+	 * commands we previously sent; if it doesn't, something is out of
+	 * sync, so close the connection and start again.
+	 */
+	if (!(msgid = str_next_word(line))) {
+		fconn_log(LOG_INFO, fc, "received %d response with no "
+				"message-id", resp);
+		return 1;
+	}
+
+	/*
+	 * Find the qent for the oldest sent command, and make sure the
+	 * message-id matches.  INN <= 2.5.2 has a bug where it sends
+	 * invalid responses if the server is paused, e.g.
+	 * 	431 Flush log and syslog files
+	 * If we don't recognise the message-id, close the connection and
+	 * try again later, by which time the server will hopefully be
+	 * unpaused.
+	 */
+	if ((qe = TAILQ_FIRST(&fc->fc_cq)) == NULL) {
+		fconn_log(LOG_INFO, fc, "received response without sending "
+			  "any command: %d %.*s%.*s", resp,
+			  str_printf(msgid), str_printf(line));
 		str_free(msgid);
 		return 1;
 	}
 
-	art = ae->ae_article;
-	str_free(msgid);
+	hash_remove(fc->fc_feeder->fe_pending, str_begin(msgid), str_length(msgid));
 
-	--fe->fe_waiting_size;
+	TAILQ_REMOVE(&fc->fc_cq, qe, qe_list);
+	if (!str_equal(qe->qe_msgid, msgid)) {
+		fconn_log(LOG_INFO, fc, "expected response for %s message-id "
+			  "%.*s, but got %d %.*s%.*s",
+			  qe->qe_cmd == QE_CHECK ? "CHECK" : "TAKETHIS",
+			  str_printf(qe->qe_msgid), resp,
+			  str_printf(msgid), str_printf(line));
+		str_free(msgid);
+		qefree(qe);
+		return 1;
+	}
+
+	--fc->fc_ncq;
 
 	switch (resp) {
 	case 238:	/* CHECK, send the article */
-		feeder_takethis(fe, ae);
+		/*
+		 * fconn_takethis() will free the qe for us (actually, it goes
+		 * straight back into the cq).
+		 */
+		fconn_takethis(fc, qe);
 		break;
 
 	case 431:	/* CHECK, defer the article */
-		++fe->fe_server->se_out_deferred;
-		++fe->fe_defer;
+		/*
+		 * Move the article to the deferred queue.  For adaptive 
+		 * feeding, treat this as a rejection, because the server would 
+		 * probably have rejected the article if we'd tried to send it.  
+		 * (431 nearly always means another server is sending the 
+		 * article at the same time).
+		 */
+		++fc->fc_feeder->fe_server->se_out_deferred;
 
-		art_deref(art);
-		bfree(ba_ae, ae);
-		feeder_adp_check(fe, 0);
+		server_defer(fc->fc_feeder->fe_server, qe);
+		fconn_adp_check(fc, 0);
 		break;
 
 	case 438:	/* CHECK, never send the article */
-		feeder_remove_backlog(fe, art);
-		++fe->fe_server->se_out_refused;
-		++fe->fe_refuse;
+		/*
+		 * Remove the article from the q.
+		 */
+		server_remove_q(fc->fc_feeder->fe_server, qe);
+		++fc->fc_feeder->fe_server->se_out_refused;
 
-		art_deref(art);
-		bfree(ba_ae, ae);
-		feeder_adp_check(fe, 0);
-		feeder_go(fe);
+		qefree(qe);
+		fconn_adp_check(fc, 0);
 		break;
 
 	case 239:	/* TAKETHIS, accepted */
-		feeder_remove_backlog(fe, art);
-
-		++fe->fe_server->se_out_accepted;
-		++fe->fe_accept;
-		art_deref(art);
-		bfree(ba_ae, ae);
-		feeder_adp_check(fe, 1);
-		feeder_go(fe);
-		break;
-
 	case 439:	/* TAKETHIS, rejected */
-		feeder_remove_backlog(fe, art);
+		/*
+		 * Remove the article from the backlog, it's no longer our
+		 * responsibility.  Only difference between these two is
+		 * the statistic we increment.
+		 */
+		server_remove_q(fc->fc_feeder->fe_server, qe);
 
-		++fe->fe_server->se_out_rejected;
-		++fe->fe_reject;
-		art_deref(art);
-		bfree(ba_ae, ae);
-		feeder_adp_check(fe, 0);
-		feeder_go(fe);
+		if (resp == 239)
+			++fc->fc_feeder->fe_server->se_out_accepted;
+		else
+			++fc->fc_feeder->fe_server->se_out_rejected;
+
+		fconn_adp_check(fc, resp == 239 ? 1 : 0);
+		qefree(qe);
 		break;
 	}
-
 	return 0;
 }
 
+/*
+ * Write data to a feeder connection -- va_list version.
+ */
 static void
-feeder_vprintf(fe, fmt, ap)
-	feeder_t	*fe;
+fconn_vprintf(fc, fmt, ap)
+	fconn_t		*fc;
 	char const	*fmt;
 	va_list		 ap;
 {
@@ -540,27 +627,50 @@ char	 buf[8192];
 char	*r = buf;
 int	 len;
 
+	/*
+	 * Try to write it into a static buffer on the stack to avoid a
+	 * malloc().  If it's too large, allocate space.
+	 */
 	len = vsnprintf(buf, sizeof(buf), fmt, ap);
 	if ((unsigned int) len >= sizeof (buf)) {
-		r = xmalloc(len + 1);
+		r = (char *) xmalloc(len + 1);
 		vsnprintf(r, len + 1, fmt, ap);
 	}
 
-	net_write(fe->fe_fd, r, len);
+	net_write(fc->fc_fd, r, len);
 
 	if (r != buf)
 		free(r);
 }
 
+/*
+ * Write raw data to a feeder connection.  This is more efficient than
+ * fconn_printf, and never copies.
+ */
 static void
-feeder_printf(feeder_t *fe, char const *fmt, ...)
+fconn_puts(fc, text)
+	fconn_t		*fc;
+	char const	*text;
+{
+	net_write(fc->fc_fd, text, strlen(text));
+}
+
+/*
+ * Write formatted data to a feeder connection.  Don't use this for large data 
+ * (like articles) since it will do a needless malloc and copy.
+ */
+static void
+fconn_printf(fconn_t *fc, char const *fmt, ...)
 {
 va_list	ap;
 	va_start(ap, fmt);
-	feeder_vprintf(fe, fmt, ap);
+	fconn_vprintf(fc, fmt, ap);
 	va_end(ap);
 }
 
+/*
+ * Log a message relating to the feeder.
+ */
 static void
 feeder_log(int sev, feeder_t *fe, char const *fmt, ...)
 {
@@ -570,290 +680,344 @@ va_list	ap;
 	va_end(ap);
 }
 
+/*
+ * Log a message relating to the feeder (va_list version).
+ */
 static void
-feeder_vlog(int sev, feeder_t *fe, char const *fmt, va_list ap)
+feeder_vlog(sev, fe, fmt, ap)
+	feeder_t	*fe;
+	char const	*fmt;
+	va_list		 ap;
 {
 char	buf[8192];
 char	*r = buf;
 int	len;
 
+	/*
+	 * Try to write it into a static buffer on the stack to avoid a
+	 * malloc().  If it's too large, allocate space.
+	 */
 	len = vsnprintf(buf, sizeof(buf), fmt, ap);
-	if ((unsigned int) len >= sizeof (buf)) {
-		r = xmalloc(len + 1);
+	if ((unsigned int) len >= sizeof(buf)) {
+		r = (char *) xmalloc(len + 1);
 		vsnprintf(r, len + 1, fmt, ap);
 	}
 
-	nts_log(sev, "feeder: %s%s: %s", fe->fe_server->se_name, 
-			fe->fe_strname, r);
+	nts_log(sev, "feeder: %s: %s", fe->fe_server->se_name, r);
 
 	if (r != buf)
 		free(r);
 }
 
+/*
+ * Log a message relating to the feeder connection.
+ */
 static void
-feeder_check(fe, ae)
-	feeder_t	*fe;
-	article_entry_t	*ae;
+fconn_log(int sev, fconn_t *fc, char const *fmt, ...)
 {
-	if (fe->fe_flags & FE_ADP) {
-		feeder_takethis(fe, ae);
-	} else {
-		time(&fe->fe_last_used);
+va_list	ap;
+	va_start(ap, fmt);
+	fconn_vlog(sev, fc, fmt, ap);
+	va_end(ap);
+}
 
-		hash_insert(fe->fe_waiting_hash, str_begin(ae->ae_article->art_msgid),
-				str_length(ae->ae_article->art_msgid), ae);
+/*
+ * Log a message relating to the feeder connection (va_list version).
+ */
+static void
+fconn_vlog(sev, fc, fmt, ap)
+	fconn_t		*fc;
+	char const	*fmt;
+	va_list		 ap;
+{
+char	buf[8192];
+char	*r = buf;
+int	len;
 
-		net_pause(fe->fe_fd);
-		net_write(fe->fe_fd, "CHECK ", 6);
-		net_write(fe->fe_fd, str_begin(ae->ae_article->art_msgid),
-				str_length(ae->ae_article->art_msgid));
-		net_write(fe->fe_fd, "\r\n", 2);
-		net_unpause(fe->fe_fd);
-		++fe->fe_waiting_size;
+	/*
+	 * Try to write it into a static buffer on the stack to avoid a
+	 * malloc().  If it's too large, allocate space.
+	 */
+	len = vsnprintf(buf, sizeof(buf), fmt, ap);
+	if ((unsigned int) len >= sizeof (buf)) {
+		r = (char *) xmalloc(len + 1);
+		vsnprintf(r, len + 1, fmt, ap);
 	}
+
+	nts_log(sev, "feeder: %s%s: %s", fc->fc_feeder->fe_server->se_name, 
+			fc->fc_strname, r);
+
+	if (r != buf)
+		free(r);
 }
 
+/*
+ * Send a CHECK command for the given article and add it to the waiting list.
+ */
 static void
-feeder_takethis(fe, ae)
-	feeder_t	*fe;
-	article_entry_t	*ae;
+fconn_check(fc, qe)
+	fconn_t	*fc;
+	qent_t	*qe;
 {
-	time(&fe->fe_last_used);
-	++fe->fe_waiting_size;
-	hash_insert(fe->fe_waiting_hash, str_begin(ae->ae_article->art_msgid),
-			str_length(ae->ae_article->art_msgid), ae);
+char	buf[512];
+int	len;
 
-	net_pause(fe->fe_fd);
-	net_write(fe->fe_fd, "TAKETHIS ", 9);
-	net_write(fe->fe_fd, str_begin(ae->ae_article->art_msgid),
-			str_length(ae->ae_article->art_msgid));
-	net_write(fe->fe_fd, "\r\n", 2);
-	net_write(fe->fe_fd, str_begin(ae->ae_article->art_content),
-			str_length(ae->ae_article->art_content));
-	net_write(fe->fe_fd, ".\r\n", 3);
-	net_unpause(fe->fe_fd);
-}
-
-static void
-feeder_resend_backlog(udata)
-	void	*udata;
-{
-server_t	*se;
-	SLIST_FOREACH(se, &servers, se_list) {
-		if (!se->se_send_to)
-			continue;
-		if (!server_has_backlog(se))
-			continue;
-
-		if (!se->se_feeder) {
-			if (se->se_feeder_last_fail + 60 > time(NULL))
-				continue;
-
-			se->se_feeder = feeder_new(se);
-			feeder_connect(se->se_feeder);
-		} else if (se->se_feeder->fe_state == FS_RUNNING) {
-			feeder_load_backlog(se->se_feeder);
-			feeder_go(se->se_feeder);
-		}
+	/*
+	 * If this article has already been offered, don't offer it
+	 * again.  Can sometimes happen with a slow server when
+	 * processing deferred articles.
+	 */
+	if (hash_find(fc->fc_feeder->fe_pending,
+		      str_begin(qe->qe_msgid),
+		      str_length(qe->qe_msgid))) {
+		qefree(qe);
+		return;
 	}
+
+	/*
+	 * Don't send a CHECK at all if we're in adaptive mode.
+	 */
+	if (fc->fc_feeder->fe_flags & FE_ADP) {
+		fconn_takethis(fc, qe);
+		return;
+	} 
+
+	hash_insert(fc->fc_feeder->fe_pending,
+		    str_begin(qe->qe_msgid),
+		    str_length(qe->qe_msgid),
+		    fc);
+
+	time(&fc->fc_last_used);
+	qe->qe_cmd = QE_CHECK;
+	TAILQ_INSERT_TAIL(&fc->fc_cq, qe, qe_list);
+
+	len = snprintf(buf, sizeof(buf), "CHECK %.*s\r\n", str_printf(qe->qe_msgid));
+	net_write(fc->fc_fd, buf, len);
+	++fc->fc_ncq;
+}
+
+/*
+ * Send a TAKETHIS command for the qe, and put it on the cq.  The caller
+ * will have removed it already if it was there previously (from a CHECK).
+ */
+static void
+fconn_takethis(fconn_t *fc, qent_t *qe)
+{
+spool_header_t	 hdr;
+str_t		 text;
+
+	/*
+	 * If this article has already been offered, don't offer it
+	 * again.  Can sometimes happen with a slow server when
+	 * processing deferred articles.
+	 */
+	if (hash_find(fc->fc_feeder->fe_pending,
+		      str_begin(qe->qe_msgid),
+		      str_length(qe->qe_msgid))) {
+		qefree(qe);
+		return;
+	}
+
+	/*
+	 * Most likely cause of this is that the spool file containing
+	 * the article expired.
+	 */
+	if (!spool_fetch_text(qe->qe_pos.sp_id, qe->qe_pos.sp_offset, &hdr, &text)) {
+		qefree(qe);
+		return;
+	}
+
+	hash_insert(fc->fc_feeder->fe_pending,
+		    str_begin(qe->qe_msgid),
+		    str_length(qe->qe_msgid),
+		    fc);
+
+	qe->qe_cmd = QE_TAKETHIS;
+	time(&fc->fc_last_used);
+	++fc->fc_ncq;
+	TAILQ_INSERT_TAIL(&fc->fc_cq, qe, qe_list);
+
+	fconn_printf(fc, "TAKETHIS %.*s\r\n%.*s.\r\n",
+			str_printf(qe->qe_msgid),
+			str_printf(text));
+	str_free(text);
 }
 
 static void
-feeder_load_backlog(fe)
+feeder_load(fe, backlog)
 	feeder_t	*fe;
 {
 int		 ret;
 DB_TXN		*txn;
 DBC		*curs;
-int		 n = 50;
-server_t	*se = fe->fe_server;
 DBT		 key, data;
-char		 dbuf[sizeof(uint32_t) + sizeof(uint64_t)];
+DB		*db;
+unsigned char	 pbuf[4 + 8];
 
-	if (fe->fe_send_queue_size >= MAXQ)
-		return;
+int i = 0;
+	if (backlog)
+		db = fe->fe_server->se_deferred;
+	else
+		db = fe->fe_server->se_q;
 
 	bzero(&key, sizeof(key));
 	bzero(&data, sizeof(data));
-	key.data = dbuf;
-	key.size = sizeof(dbuf);
+	data.flags = DB_DBT_REALLOC;
 
 	txn = db_new_txn(0);
-	se->se_backlog_db->cursor(se->se_backlog_db, txn, &curs, 0);
+	db->cursor(db, txn, &curs, 0);
 
-	if (fe->fe_type == FT_BACKLOG && fe->fe_spool_pos.sp_offset != 0) {
-		int32put(dbuf, fe->fe_spool_pos.sp_id);
-		int64put(dbuf + sizeof(uint32_t), fe->fe_spool_pos.sp_offset);
-		if ((ret = curs->get(curs, &key, &data, DB_SET_RANGE)) == DB_NOTFOUND) {
-			curs->close(curs);
-			txn->commit(txn, 0);
-			return;
+	/*
+	 * If we're not processing backlog, set the cursor to point at the
+	 * last entry we loaded.  This means we don't continually process
+	 * the same queue entries forever when the queue is long.
+	 *
+	 * pos starts at 0, so on startup we'll start at the beginning
+	 * of the queue.
+	 */
+	if (backlog) {
+		if (ret = curs->get(curs, &key, &data, DB_FIRST)) {
+			if (ret == DB_NOTFOUND) {
+				curs->close(curs);
+				txn->commit(txn, 0);
+				return;
+			}
+			panic("cannot set cursor position: %s", db_strerror(ret));
+		}
+
+	} else {
+		pack(pbuf, "uU", fe->fe_server->se_pos.sp_id,
+				 fe->fe_server->se_pos.sp_offset);
+		key.data = pbuf;
+		key.size = sizeof(pbuf);
+
+		if (ret = curs->get(curs, &key, &data, DB_SET_RANGE)) {
+			if (ret == DB_NOTFOUND) {
+				curs->close(curs);
+				txn->commit(txn, 0);
+				return;
+			}
+			panic("cannot set cursor position: %s", db_strerror(ret));
 		}
 	}
 
-	while (n > 0 && fe->fe_send_queue_size < MAXQ) {
-	spool_pos_t	 pos;
-	article_t	*art;
-	article_entry_t	*ae;
-
-		if (ret = curs->get(curs, &key, &data, DB_NEXT)) {
-			if (ret == DB_NOTFOUND) {
-				fe->fe_type = FT_REALTIME;
-				bzero(&fe->fe_spool_pos, sizeof(fe->fe_spool_pos));
-				break;
-			} else
-				panic("feeder: cannot read backlog: %s",
-						db_strerror(ret));
-		}
+	for (;;) {
+	qent_t		*qe;
+	fconn_t		*fc;
+	int		 nconns = 0, nfull = 0;
 
 		assert(key.size == sizeof(uint32_t) + sizeof(uint64_t));
-		pos.sp_id = int32get(key.data);
-		pos.sp_offset = int64get(key.data + sizeof(uint32_t));
 
-		bcopy(&pos, &fe->fe_spool_pos, sizeof(pos));
+		qe = qealloc();
+		unpack((unsigned char const *) key.data, "uU",
+			&qe->qe_pos.sp_id,
+			&qe->qe_pos.sp_offset);
+		qe->qe_msgid = str_new_cl(data.data, data.size);
+		qe->qe_type = backlog ? QT_DEFERRED : QT_Q;
 
-		if ((art = spool_fetch(pos.sp_id, pos.sp_offset)) == NULL) {
-			curs->del(curs, 0);
-			continue;
-		}
-
-		if (hash_find(fe->fe_waiting_hash, str_begin(art->art_msgid),
-					str_length(art->art_msgid))) {
-			article_free(art);
+		/*
+		 * Find a suitable fconn to put the command on.
+		 */
+		TAILQ_FOREACH(fc, &fe->fe_conns, fc_list) {
+			nconns++;
+			if (fc->fc_state < FS_RUNNING) 
+				continue;
+			if (fc->fc_flags & FC_FULL) {
+				nfull++;
+				continue;
+			}
 			break;
 		}
 
-		ae = bzalloc(ba_ae);
-		art->art_refs = 1;
-		ae->ae_article = art;
-		SIMPLEQ_INSERT_TAIL(&fe->fe_send_queue, ae, ae_list);
-		++fe->fe_send_queue_size;
-		n--;
+		i++;
+		/*
+		 * If we found an idle fconn, use that to check the article;
+		 * otherwise, open a new one, but only if all the feeders
+		 * were busy, not if (e.g.) a new one is in the middle of
+		 * connecting. 
+		 */
+		if (fc) {
+			if (!backlog) {
+				assert(qe->qe_pos.sp_id != 0x5A5A5A5A);
+				bcopy(&qe->qe_pos, &fe->fe_server->se_pos,
+					sizeof(fe->fe_server->se_pos));
+			}
+			fconn_check(fc, qe);
+
+			if (ret = curs->get(curs, &key, &data, DB_NEXT)) {
+				if (ret == DB_NOTFOUND)
+					break;
+				else
+					panic("feeder: cannot read backlog: %s",
+							db_strerror(ret));
+			}
+			continue;
+		} else if (nconns == nfull &&
+			   nconns < fe->fe_server->se_maxconns_out) {
+			feeder_log(LOG_INFO, fe, "raising active connections to %d",
+					nconns + 1);
+			fc = fconn_new(fe);
+			TAILQ_INSERT_HEAD(&fe->fe_conns, fc, fc_list);
+			fconn_connect(fc);
+		}
+		qefree(qe);
+		break;
 	}
 
+	free(data.data);
+#if 0
+	if (i)
+printf("[%s] loaded %d articles from %s\n", fe->server->name,
+		i, backlog ? "backlog" : "q");
+#endif
 	curs->close(curs);
 	db_txn_commit(txn);
 }
 
 static void
-feeder_go(fe)
-	feeder_t	*fe;
+fconn_close(fc)
+	fconn_t	*fc;
 {
-	while (fe->fe_waiting_size < MAXQ) {
-	article_entry_t	*ae;
-
-		if (fe->fe_type == FT_BACKLOG &&
-		    fe->fe_send_queue_size < MAXQ)
-			feeder_load_backlog(fe);
-
-		if (SIMPLEQ_EMPTY(&fe->fe_send_queue))
-			return;
-
-		ae = SIMPLEQ_FIRST(&fe->fe_send_queue);
-		SIMPLEQ_REMOVE_HEAD(&fe->fe_send_queue, ae_list);
-		--fe->fe_send_queue_size;
-
-		if (hash_find(fe->fe_waiting_hash,
-				str_begin(ae->ae_article->art_msgid),
-				str_length(ae->ae_article->art_msgid))) {
-			art_deref(ae->ae_article);
-			bfree(ba_ae, ae);
-			continue;
-		}
-		feeder_check(fe, ae);
-	}
-}
-
-static void
-feeder_close(fe)
-	feeder_t	*fe;
-{
-	if (fe->fe_flags & FE_DEAD)
-		return;
-	fe->fe_flags |= FE_DEAD;
-	feeder_log(LOG_INFO, fe, "offer %d, accept %d, defer %d, refuse %d, reject %d",
-			fe->fe_offer, fe->fe_accept, fe->fe_defer,
-			fe->fe_refuse, fe->fe_reject);
-	net_soon(feeder_close_impl, fe);
-}
-
-static void
-feeder_close_impl(udata)
-	void	*udata;
-{
-feeder_t	*fe = udata;
-article_entry_t	*ae;
-address_t	*addr;
+hash_table_t	*pending = fc->fc_feeder->fe_pending;
+hash_item_t	*ie, *next;
 size_t		 i;
+qent_t		*qe;
 
-	while (ae = SIMPLEQ_FIRST(&fe->fe_send_queue)) {
-		SIMPLEQ_REMOVE_HEAD(&fe->fe_send_queue, ae_list);
-		art_deref(ae->ae_article);
-		bfree(ba_ae, ae);
-	}
+	if (!TAILQ_EMPTY(&fc->fc_cq)) {
+		bzero(&fc->fc_feeder->fe_server->se_pos,
+		      sizeof(fc->fc_feeder->fe_server->se_pos));
 
-	for (i = 0; i < fe->fe_waiting_hash->ht_nbuckets; i++) {
-	hash_item_t	*ie, *next;
-		LIST_FOREACH_SAFE(ie, &fe->fe_waiting_hash->ht_buckets[i], hi_link, next) {
-		article_entry_t	*ae = ie->hi_data;
-			LIST_REMOVE(ie, hi_link);
-			art_deref(ae->ae_article);
-			bfree(ba_ae, ae);
-			free(ie->hi_key);
-			free(ie);
-		}
-	}
-	hash_free(fe->fe_waiting_hash);
-
-	if (fe->fe_addrs) {
-		while (addr = SIMPLEQ_FIRST(fe->fe_addrs)) {
-			SIMPLEQ_REMOVE_HEAD(fe->fe_addrs, ad_list);
-			free(addr);
+		while (qe = TAILQ_FIRST(&fc->fc_cq)) {
+			TAILQ_REMOVE(&fc->fc_cq, qe, qe_list);
+			qefree(qe);
 		}
 	}
 
-	fe->fe_server->se_feeder = NULL;
-	if (fe->fe_fd)
-		net_close(fe->fe_fd);
-	free(fe->fe_strname);
-	bfree(ba_fe, fe);
+	for (i = 0; i < pending->ht_nbuckets; i++) {
+		LIST_FOREACH_SAFE(ie, &pending->ht_buckets[i], hi_link, next) {
+			if (ie->hi_data == fc) {
+				LIST_REMOVE(ie, hi_link);
+				free(ie->hi_key);
+				free(ie);
+			}
+		}
+	}
+
+	TAILQ_REMOVE(&fc->fc_feeder->fe_conns, fc, fc_list);
+
+	if (fc->fc_addrs)
+		freeaddrinfo(fc->fc_addrs);
+
+	net_close(fc->fc_fd);
+	free(fc->fc_strname);
+	bfree(ba_fc, fc);
 }
 
 static void
-feeder_remove_backlog(fe, art)
-	feeder_t	*fe;
-	article_t	*art;
+fconn_adp_check(fc, accepted)
+	fconn_t	*fc;
 {
-DBT	key;
-int	ret;
-char	dbuf[sizeof(uint32_t) + sizeof(uint64_t)];
-DB_TXN	*txn;
-
-	int32put(dbuf, art->art_spool_pos.sp_id);
-	int64put(dbuf + sizeof(uint32_t), 
-		art->art_spool_pos.sp_offset);
-
-	bzero(&key, sizeof(key));
-	key.data = dbuf;
-	key.size = sizeof(dbuf);
-
-	txn = db_new_txn(DB_TXN_WRITE_NOSYNC);
-	if (ret = fe->fe_server->se_backlog_db->del(
-			fe->fe_server->se_backlog_db, txn, &key, 0))
-	/*	if (ret != DB_NOTFOUND)*/
-	/*		panic("cannot remove backlog entry: %s",
-					db_strerror(ret));*/
-		nts_log(LOG_WARNING, "cannot remove backlog entry %.8lX,%lu: %s",
-				(long unsigned) art->art_spool_pos.sp_id,
-				(long unsigned) art->art_spool_pos.sp_offset,
-				db_strerror(ret));
-	txn->commit(txn, 0);
-}
-
-static void
-feeder_adp_check(fe, accepted)
-	feeder_t	*fe;
-{
+feeder_t	*fe = fc->fc_feeder;
 server_t	*se = fe->fe_server;
 
 	++fe->fe_adp_count;
@@ -864,16 +1028,34 @@ server_t	*se = fe->fe_server;
 	if (fe->fe_adp_count < 100 || (se->se_adp_hi <= 0))
 		return;
 
-
 	if ((fe->fe_flags & FE_ADP) && (fe->fe_adp_accepted < se->se_adp_lo)) {
-		feeder_log(LOG_INFO, fe, "server rejected %d/100 articles, switching "
+		fconn_log(LOG_INFO, fc, "server rejected %d/100 articles, switching "
 				"back to normal feed", 100 - fe->fe_adp_accepted);
 		fe->fe_flags &= ~FE_ADP;
-	} else if (!(fe->fe_flags & FE_ADP) && (fe->fe_adp_accepted >= se->se_adp_hi)) {
-		feeder_log(LOG_INFO, fe, "server accepted %d/100 articles, eliding "
+	} else if ((!fe->fe_flags & FE_ADP) && (fe->fe_adp_accepted >= se->se_adp_hi)) {
+		fconn_log(LOG_INFO, fc, "server accepted %d/100 articles, eliding "
 				"CHECK commands", fe->fe_adp_accepted);
 		fe->fe_flags |= FE_ADP;
 	}
 
 	fe->fe_adp_count = fe->fe_adp_accepted = 0;
+}
+
+fconn_t *
+fconn_new(fe)
+	feeder_t	*fe;
+{
+fconn_t	*fc;
+	fc = bzalloc(ba_fc);
+	fc->fc_feeder = fe;
+	TAILQ_INIT(&fc->fc_cq);
+
+	return fc;
+}
+
+void
+feeder_notify(fe)
+	feeder_t	*fe;
+{
+	feeder_load(fe, 0);
 }

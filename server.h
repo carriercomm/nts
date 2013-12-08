@@ -45,6 +45,27 @@ typedef SIMPLEQ_HEAD(server_backlog_list, server_backlog_entry)
 
 #define SERVER_MAXCONNS_DEFAULT	15
 
+typedef enum {
+	QT_Q,
+	QT_DEFERRED
+} q_type_t;
+
+typedef struct qent {
+	q_type_t                qe_type;
+	enum {
+		QE_CHECK,
+		QE_TAKETHIS
+	}                       qe_cmd;
+	str_t                   qe_msgid;
+	spool_pos_t             qe_pos;
+	TAILQ_ENTRY(qent)       qe_list;
+} qent_t;
+
+typedef TAILQ_HEAD(sendq, qent) sendq_t;
+
+qent_t	*qealloc(void);
+void	 qefree(qent_t *);
+
 typedef struct server {
 	char			*se_name;
 	char 	 		*se_port;
@@ -64,10 +85,13 @@ typedef struct server {
 	struct feeder		*se_feeder;
 	time_t			 se_feeder_last_fail;
 
-	DB			*se_backlog_db;
+	DB			*se_q,
+				*se_deferred;
+	spool_pos_t		 se_pos;
 
 	int			 se_nconns,
-				 se_maxconns;
+				 se_maxconns_in,
+				 se_maxconns_out;
 	size_t			 se_max_size;
 
 	struct sockaddr_in	 se_bind_v4;
@@ -125,5 +149,9 @@ void		 server_set_spool_pos(server_t *, spool_pos_t *);
 int		 server_wants_article(server_t *, article_t *art);
 int		 server_accept_offer(server_t *, str_t);
 int		 server_has_backlog(server_t *);
+void		 server_notify_article(article_t *);
+void		 server_defer(server_t *, qent_t *);
+void		 server_remove_q(server_t *, qent_t *);
+void             server_addq(server_t *, struct article *, DB_TXN *);
 
 #endif	/* !NTS_SERVER_H */

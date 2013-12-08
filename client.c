@@ -319,7 +319,7 @@ int		 one = 1;
 	}
 
 	if (server) {
-		if (server->se_nconns == server->se_maxconns) {
+		if (server->se_nconns == server->se_maxconns_in) {
 			nts_log(LOG_NOTICE, "%s[%s]:%s: connection rejected: too many connections",
 					server->se_name, host, serv);
 			client_printf(client, "400 Too many connection (%s).\r\n", contact_address);
@@ -749,7 +749,7 @@ str_t	type;
 					host, sizeof(host), serv, sizeof(serv),
 					NI_NUMERICHOST | NI_NUMERICSERV);
 
-				if (se->se_nconns == se->se_maxconns) {
+				if (se->se_nconns == se->se_maxconns_in) {
 					nts_log(LOG_NOTICE, "%s[%s]:%s: "
 						"connection rejected: "
 						"too many connections",
@@ -956,7 +956,7 @@ int		 rejected;
 		client->cl_server->se_in_accepted++;
 		spool_store(article);
 		client_printf(client, "239 %.*s\r\n", str_printf(client->cl_msgid));
-		feeder_notify_article(article);
+		server_notify_article(article);
 		if (article->art_refs == 0)
 			article_free(article);
 		goto done;

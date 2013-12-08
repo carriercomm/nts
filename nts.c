@@ -817,11 +817,12 @@ ctl_do_feeder_stats(ctl)
 {
 server_t	*se;
 
-	ctl_printf(ctl, "%-20s  %3s %3s %-3s %-8s %-8s %s\n",
-			"peer", "sdq", "wt", "adp", "state", "mode", "addr");
+	ctl_printf(ctl, "%-20s  %3s %3s %-8s %-8s %s\n",
+			"peer", "q", "adp", "state", "mode", "addr");
 
 	SLIST_FOREACH(se, &servers, se_list) {
 	feeder_t	*fe = se->se_feeder;
+	fconn_t		*fc;
 	static char const *const states[] = {
 		"dns",
 		"connect",
@@ -832,17 +833,14 @@ server_t	*se;
 		"running",
 	};
 
-		if (fe == NULL)
-			ctl_printf(ctl, "%-20s  %3s %3s %3s %-8s %-8s %s\n",
-				se->se_name, "-", "-", "-", "stopped", "-", "-");
-		else
-			ctl_printf(ctl, "%-20s  %3d %3d %3s %-8s %-8s %s\n",
-				se->se_name, fe->fe_send_queue_size,
-				fe->fe_waiting_size,
-				(fe->fe_flags & FE_ADP) ? "yes" : "no",
-				states[fe->fe_state],
-				(fe->fe_mode == FM_IHAVE) ? "ihave" : "stream",
-				fe->fe_strname);
+		TAILQ_FOREACH(fc, &fe->fe_conns, fc_list) {
+			ctl_printf(ctl, "%-20s  %3d %3s %-8s %-8s %s\n",
+				se->se_name, fc->fc_ncq,
+				(fc->fc_flags & FE_ADP) ? "yes" : "no",
+				states[fc->fc_state],
+				(fc->fc_mode == FM_IHAVE) ? "ihave" : "stream",
+				fc->fc_strname);
+		}
 	}
 }
 
@@ -1073,4 +1071,131 @@ struct rusage	rus;
 			d, h, m, s, cd, ch, cm, cs, cms,
 			(((double)ct / 1000) / upt) * 100);
 	return str;
+}
+
+void
+pack(unsigned char *buf, char const *fmt, ...)
+{
+va_list          ap;
+char const      *s;
+size_t           len;
+str_t            str;
+uint32_t         u32;
+uint64_t         u64;
+uint8_t          u8;
+
+        va_start(ap, fmt);
+
+        while (*fmt) {
+                switch (*fmt++) {
+                case 'b':
+                        u8 = va_arg(ap, int);
+                        int8put(buf, u8);
+                        buf += 1;
+                        break;
+
+                case 'u':
+                case 'i':
+                        u32 = va_arg(ap, uint32_t);
+                        int32put(buf, u32);
+                        buf += 4;
+                        break;
+
+                case 'U':
+                case 'I':
+                        u64 = va_arg(ap, uint64_t);
+                        int64put(buf, u64);
+                        buf += 8;
+                        break;
+
+                case 'f':
+                        u64 = (uint64_t) va_arg(ap, double) * 1000;
+                        int64put(buf, u64);
+                        buf += 8;
+                        break;
+
+                case 's':
+                        s = va_arg(ap, char const *);
+                        len = strlen(s);
+                        bcopy(s, buf, len);
+                        buf[len] = '\0';
+                        buf += len + 1;
+                        break;
+
+                case 'S':
+                        str = va_arg(ap, str_t);
+                        int32put(buf, str_length(str));
+                        bcopy(str_begin(str), buf + 4, str_length(str));
+                        buf += 4 + str_length(str);
+                        break;
+
+                default:
+                        abort();
+                }
+        }
+        va_end(ap);
+}
+
+void
+unpack(unsigned char const *buf, char const *fmt, ...)
+{
+va_list          ap;
+char            **s;
+size_t           len;
+str_t           *str;
+uint32_t        *u32;
+uint64_t        *u64;
+double          *d;
+uint8_t         *u8;
+
+        va_start(ap, fmt);
+
+        while (*fmt) {
+                switch (*fmt++) {
+                case 'b':
+                        u8 = va_arg(ap, uint8_t *);
+                        *u8 = int8get(buf);
+                        buf++;
+                        break;
+
+                case 'u':
+                case 'i':
+                        u32 = va_arg(ap, uint32_t *);
+                        *u32 = int32get(buf);
+                        buf += 4;
+                        break;
+
+                case 'U':
+                case 'I':
+                        u64 = va_arg(ap, uint64_t *);
+                        *u64 = int64get(buf);
+                        buf += 8;
+                        break;
+
+                case 'f':
+                        d = va_arg(ap, double *);
+                        *d = (double) int64get(buf) / 1000;
+                        buf += 8;
+                        break;
+
+                case 's':
+                        s = va_arg(ap, char **);
+                        len = strlen((char *) buf);
+                        *s = (char *) xmalloc(len);
+                        strcpy(*s, (char *) buf);
+                        buf += len + 1;
+                        break;
+
+                case 'S':
+                        str = va_arg(ap, str_t *);
+                        len = int32get(buf);
+			*str = str_new_cl((char const *) buf + 4, len);
+                        buf += 4 + len;
+                        break;
+
+                default:
+                        abort();
+                }
+        }
+        va_end(ap);
 }

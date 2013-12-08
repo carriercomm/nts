@@ -91,17 +91,6 @@ static spool_file_t	*spool_files;
 static size_t		 spool_base;
 static int		 spool_cur_file;
 
-typedef struct spool_header {
-	uint32_t	sa_magic;
-	uint32_t	sa_len;
-	uint8_t		sa_hdr_len;
-	uint32_t	sa_flags;
-	double		sa_emp_score;
-	double		sa_phl_score;
-	uint64_t	sa_crc;
-	uint32_t	sa_text_len;
-} spool_header_t;
-
 #define	SPOOL_HDR_SIZE	(4 + 4 + 1 + 4 + 8 + 8 + 8 + 4)
 #define	SPOOL_MAGIC	0x4E53504C	/* NSPL */
 #define	SPOOL_MAGIC_EOS	0x4E454E44	/* NEND */
@@ -333,103 +322,14 @@ spool_fetch(spid, spos)
 	spool_offset_t	 spos;
 {
 spool_header_t	 hdr;
-char		*artdata;
-str_t		 artstr;
+str_t		 text;
 article_t	*art;
-spool_file_t	*sf;
-size_t		 artloc;
 
-	if (spid < spool_base || spid > (spool_base + spool_cur_file)) {
-		errno = EINVAL;
+	if (spool_fetch_text(spid, spos, &hdr, &text) == -1)
 		return NULL;
-	}
 
-	sf = &spool_files[spid - spool_base];
-	if (spos + SPOOL_HDR_SIZE > sf->sf_size) {
-		errno = EINVAL;
-		return NULL;
-	}
-
-	spool_read_header(sf, spos, &hdr);
-
-	if (hdr.sa_magic == SPOOL_MAGIC_EOS) {
-		errno = EINVAL;
-		return NULL;
-	}
-
-	if (hdr.sa_magic != SPOOL_MAGIC) {
-		nts_log(LOG_WARNING, "spool: \"%s\": article at %X,%lu: "
-			"bad magic", sf->sf_fname,
-			(int) spid, (long unsigned) spos);
-		errno = EIO;
-		return NULL;
-	}
-
-	artloc = spos + hdr.sa_hdr_len;
-
-	if (artloc + hdr.sa_len > sf->sf_size) {
-		nts_log(LOG_WARNING, "spool: \"%s\": article at %.8lX/%lu goes "
-			       "past end of spool file", sf->sf_fname,
-			       (long unsigned) spid, (long unsigned) spos);
-		errno = EIO;
-		return NULL;
-	}
-
-	if (spool_method == M_MMAP) {
-		artdata = (char *) sf->sf_addr + artloc;
-	} else {
-		artdata = xmalloc(hdr.sa_len);
-		if (pread(sf->sf_fd, artdata, hdr.sa_len, artloc) < hdr.sa_len)
-			panic("spool: \"%s\": read: %s",
-				sf->sf_fname, strerror(errno));
-	}
-
-	if (spool_check_crc && (hdr.sa_flags & ART_CRC)) {
-		if (crc64(artdata, hdr.sa_len) != hdr.sa_crc) {
-			nts_log(LOG_WARNING, "spool: \"%s\": bad CRC", sf->sf_fname);
-			if (spool_method == M_FILE)
-				free(artdata);
-			errno = EIO;
-			return NULL;
-		}
-	}
-
-	if (hdr.sa_flags & ART_COMPRESSED) {
-	unsigned char	*data;
-	unsigned long	 datasize;
-	int		 ret;
-
-		datasize = hdr.sa_text_len;
-		data = xmalloc(datasize);
-
-		if ((ret = uncompress(data, &datasize, (unsigned char *) artdata,
-		                      hdr.sa_len)) != Z_OK) {
-			nts_log(LOG_WARNING, "spool: \"%s\": uncompress "
-					     "failed: %s", sf->sf_fname, zError(ret));
-
-			if (spool_method == M_FILE)
-				free(artdata);
-
-			free(data);
-			errno = EIO;
-			return NULL;
-		}
-
-		artstr = str_new_cl((char *) data, datasize);
-		free(data);
-	} else {
-		if (spool_method == M_MMAP)
-			artstr = str_new_cl_nocopy(artdata, hdr.sa_len);
-		else {
-			artstr = str_new_cl(artdata, hdr.sa_len);
-		}
-	}
-
-	if (spool_method == M_FILE)
-		free(artdata);
-
-	art = article_parse(artstr);
-	str_free(artstr);
+	art = article_parse(text);
+	str_free(text);
 
 	if (!art)
 		return NULL;
@@ -443,6 +343,111 @@ size_t		 artloc;
 	art->art_hdr_len = hdr.sa_hdr_len;
 
 	return art;
+}
+
+int
+spool_fetch_text(spid, spos, hdr, text)
+	spool_id_t	 spid;
+	spool_offset_t	 spos;
+	spool_header_t	*hdr;
+	str_t		*text;
+{
+char		*artdata;
+str_t		 artstr;
+spool_file_t	*sf;
+size_t		 artloc;
+
+	if (spid < spool_base || spid > (spool_base + spool_cur_file)) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	sf = &spool_files[spid - spool_base];
+	if (spos + SPOOL_HDR_SIZE > sf->sf_size) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	spool_read_header(sf, spos, hdr);
+
+	if (hdr->sa_magic == SPOOL_MAGIC_EOS) {
+		errno = EINVAL;
+		return -1;
+	}
+
+	if (hdr->sa_magic != SPOOL_MAGIC) {
+		nts_log(LOG_WARNING, "spool: \"%s\": article at %X,%lu: "
+			"bad magic", sf->sf_fname,
+			(int) spid, (long unsigned) spos);
+		errno = EIO;
+		return -1;
+	}
+
+	artloc = spos + hdr->sa_hdr_len;
+
+	if (artloc + hdr->sa_len > sf->sf_size) {
+		nts_log(LOG_WARNING, "spool: \"%s\": article at %.8lX/%lu goes "
+			       "past end of spool file", sf->sf_fname,
+			       (long unsigned) spid, (long unsigned) spos);
+		errno = EIO;
+		return -1;
+	}
+
+	if (spool_method == M_MMAP) {
+		artdata = (char *) sf->sf_addr + artloc;
+	} else {
+		artdata = xmalloc(hdr->sa_len);
+		if (pread(sf->sf_fd, artdata, hdr->sa_len, artloc) < hdr->sa_len)
+			panic("spool: \"%s\": read: %s",
+				sf->sf_fname, strerror(errno));
+	}
+
+	if (spool_check_crc && (hdr->sa_flags & ART_CRC)) {
+		if (crc64(artdata, hdr->sa_len) != hdr->sa_crc) {
+			nts_log(LOG_WARNING, "spool: \"%s\": bad CRC", sf->sf_fname);
+			if (spool_method == M_FILE)
+				free(artdata);
+			errno = EIO;
+			return -1;
+		}
+	}
+
+	if (hdr->sa_flags & ART_COMPRESSED) {
+	unsigned char	*data;
+	unsigned long	 datasize;
+	int		 ret;
+
+		datasize = hdr->sa_text_len;
+		data = xmalloc(datasize);
+
+		if ((ret = uncompress(data, &datasize, (unsigned char *) artdata,
+		                      hdr->sa_len)) != Z_OK) {
+			nts_log(LOG_WARNING, "spool: \"%s\": uncompress "
+					     "failed: %s", sf->sf_fname, zError(ret));
+
+			if (spool_method == M_FILE)
+				free(artdata);
+
+			free(data);
+			errno = EIO;
+			return -1;
+		}
+
+		artstr = str_new_cl((char *) data, datasize);
+		free(data);
+	} else {
+		if (spool_method == M_MMAP)
+			artstr = str_new_cl_nocopy(artdata, hdr->sa_len);
+		else {
+			artstr = str_new_cl(artdata, hdr->sa_len);
+		}
+	}
+
+	if (spool_method == M_FILE)
+		free(artdata);
+
+	*text = artstr;
+	return 0;
 }
 
 static void
