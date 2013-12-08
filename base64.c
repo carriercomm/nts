@@ -74,7 +74,7 @@ base64_decode(inbuf, inlen, outbuf)
 	unsigned char		*outbuf;
 {
 size_t			 left = inlen;
-unsigned const char	*p = inbuf;
+unsigned const char	*p = (unsigned const char *)inbuf;
 ssize_t			 nbytes = 0;
 
 	while (left > 0) {
