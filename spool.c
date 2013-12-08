@@ -50,10 +50,10 @@
 # define fdatasync fsync
 #endif
 
+int		 spool_do_sync = 1;
 static char	*spool_path;
 static uint64_t	 spool_size = 1024 * 1024 * 100; /* 100MB */
 static int64_t	 spool_max_files = 10;
-static int	 spool_do_sync = 1;
 static int	 spool_check_crc = 0;
 static int	 spool_compress;
 static enum {

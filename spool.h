@@ -71,4 +71,6 @@ void		 spool_get_cur_pos(spool_pos_t *);
 
 void	spool_shutdown(void);
 
+extern int spool_do_sync;
+
 #endif	/* !SPOOL_H */
