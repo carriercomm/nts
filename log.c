@@ -198,10 +198,12 @@ char		 tbuf[128];
 		va_end(ap);
 	}
 
-	rfcheck(incoming_log);
-	rfprintf(incoming_log, "%s %s %c %.*s %s\n",
-			tbuf, server->se_name, status,
-			str_printf(msgid), rbuf);
+	if (incoming_log) {
+		rfcheck(incoming_log);
+		rfprintf(incoming_log, "%s %s %c %.*s %s\n",
+				tbuf, server->se_name, status,
+				str_printf(msgid), rbuf);
+	}
 
 	if (path && path_log) {
 		rfcheck(path_log);
