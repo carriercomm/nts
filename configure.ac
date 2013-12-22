@@ -39,7 +39,7 @@ AC_ARG_ENABLE([ssl],
 
 if test "$use_ssl" = yes; then
 	AC_CHECK_LIB([ssl], [SSL_CTX_new],
-	     [LIBS="$LIBS -lssl"
+	     [LIBS="$LIBS -lssl -lcrypto"
 	      AC_DEFINE([HAVE_OPENSSL], 1, [Define if OpenSSL is present])
 	     ])
 fi
@@ -52,7 +52,7 @@ AC_CHECK_HEADER([zlib.h], [], [AC_MSG_ERROR([cannot find zlib.h])])
 
 AC_CHECK_HEADERS([inttypes.h stdint.h])
 
-AC_CHECK_FUNCS([strndup strlcpy strlcat setproctitle arc4random fdatasync])
+AC_CHECK_FUNCS([strndup strlcpy strlcat setproctitle arc4random fdatasync pwritev])
 
 AC_ARG_WITH(db-include-dir,
 	[AS_HELP_STRING([--with-db-include-dir],

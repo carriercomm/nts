@@ -1198,3 +1198,28 @@ uint8_t         *u8;
         }
         va_end(ap);
 }
+
+#ifndef HAVE_PWRITEV
+ssize_t
+pwritev(d, iov, iovcnt, offset)
+	const struct iovec	*iov;
+	off_t			 offset;
+{
+const struct iovec	*v;
+ssize_t			 nwrt = 0;
+	for (v = iov; v < (iov + iovcnt); v++) {
+	ssize_t	n;
+		n = pwrite(d, v->iov_base, v->iov_len, offset);
+		if (n < 0)
+			return n;
+
+		if (n < v->iov_len)
+			return nwrt;
+
+		nwrt += n;
+		offset += v->iov_len;
+	}
+
+	return nwrt;
+}
+#endif

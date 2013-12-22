@@ -12,6 +12,7 @@
 #ifndef NTS_NTS_H
 #define	NTS_NTS_H
 
+#include	<sys/uio.h>
 #include	<stdlib.h>
 #include	<stdarg.h>
 #include	<inttypes.h>
@@ -244,5 +245,9 @@ size_t strlcat(char *dst, const char *src, size_t size);
  */
 void	pack(unsigned char *buf, char const *fmt, ...);
 void	unpack(unsigned char const *buf, char const *fmt, ...);
+
+#ifndef HAVE_PWRITEV
+ssize_t pwritev(int d, const struct iovec *iov, int iovcnt, off_t offset);
+#endif
 
 #endif	/* !NTS_NTS_H */
