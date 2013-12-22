@@ -10,6 +10,7 @@
 .SUFFIXES: .c .y .l .o .d .h
 
 VPATH		= @top_srcdir@
+top_srcdir	= @top_srcdir@
 prefix		= @prefix@
 exec_prefix	= @exec_prefix@
 bindir		= @bindir@
@@ -64,7 +65,7 @@ install:
 	${INSTALL} -d ${sbindir}
 	${INSTALL} -m 0755 nts ${sbindir}
 	${INSTALL} -d ${sysconfdir}
-	${INSTALL} -m 0644 nts.conf.example ${sysconfdir}
+	${INSTALL} -m 0644 ${top_srcdir}/nts.conf.example ${sysconfdir}
 	if ! test -e ${sysconfdir}/nts.conf; then	\
 		cp ${sysconfdir}/nts.conf.example	\
 			${sysconfdir}/nts.conf;		\
