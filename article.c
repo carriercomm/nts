@@ -145,9 +145,12 @@ str_t		 line = NULL, groups = NULL, body = NULL;
 size_t		 n;
 	
 	/* Don't allow NUL in article body */
-	for (n = 0; n < str_length(text); ++n)
-		if (str_index(text, n) == 0)
+	for (n = 0; n < str_length(text); ++n) {
+		if (str_index(text, n) == 0) {
+			nts_log(LOG_INFO, "received article with NUL character");
 			return NULL;
+		}
+	}
 
 	article = bzalloc(ba_article);
 	article->art_filters = (bs_word_t *) ((char *) article + sizeof(article_t));
