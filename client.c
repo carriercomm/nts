@@ -53,7 +53,6 @@ static listener_t *listeners;
 static void	 client_accept(int, struct sockaddr *addr, socklen_t len, SSL *ssl, void *udata);
 static void	 client_read(int fd, int what, void *udata);
 static void	 client_error(int fd, int what, int err, void *udata);
-static void	*client_filter(void *);
 static void	 client_filter_done(void *);
 static void	 client_pause(client_t *);
 static int	 client_unpause(client_t *);
@@ -873,8 +872,11 @@ int		 rejected = (client->cl_state == CS_TAKETHIS) ? 439 : 437,
 		log_article(article->art_msgid, NULL, client->cl_server, '-', "duplicate");
 	} else {
 		client->cl_farticle = article;
-		client_pause(client);
-		thr_do_work(client_filter, client, client_filter_done);
+		emp_track(client->cl_farticle);
+		client->cl_filter_result = filter_article(client->cl_farticle,
+			client->cl_strname, &client->cl_server->se_filters_in,
+			&client->cl_filter_name);
+		client_filter_done(client);
 		return;
 	}
 
@@ -887,19 +889,6 @@ err:
 
 	str_free(client->cl_article);
 	client->cl_article = NULL;
-}
-
-static void *
-client_filter(udata)
-	void	*udata;
-{
-client_t	*client = udata;
-
-	emp_track(client->cl_farticle);
-	client->cl_filter_result = filter_article(client->cl_farticle,
-			client->cl_strname, &client->cl_server->se_filters_in,
-			&client->cl_filter_name);
-	return client;
 }
 
 static void
@@ -930,9 +919,6 @@ client_filter_done(udata)
 client_t	*client = udata;
 article_t	*article;
 int		 rejected;
-
-	if (client_unpause(client) == -1)
-		return;
 
 	article = client->cl_farticle;
 	rejected = (client->cl_state == CS_TAKETHIS) ? 439 : 437;
@@ -1029,6 +1015,8 @@ static void
 client_close(client)
 	client_t	*client;
 {
+	net_io_stop(client->cl_fd);
+
 	if (client->cl_flags & CL_PAUSED) {
 		client->cl_flags |= CL_DEAD;
 		return;
