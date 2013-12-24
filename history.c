@@ -98,6 +98,50 @@ char		dbuf[sizeof(uint64_t)];
 }
 
 int
+history_add_multiple(mids)
+	char const	**mids;
+{
+DBT		 key, data;
+int		 ret;
+time_t		 now = time(NULL);
+char		 dbuf[sizeof(uint64_t)];
+DB_TXN		*txn;
+const char	**p;
+
+	bzero(&key, sizeof(key));
+	bzero(&data, sizeof(data));
+
+	data.data = &dbuf;
+	data.size = sizeof(dbuf);
+
+	int64put(dbuf, now);
+
+	for (;;) {
+		txn = db_new_txn(DB_TXN_WRITE_NOSYNC);
+
+		for (p = mids; *p; p++) {
+			key.data = (void *) *p;
+			key.size = strlen(*p);
+
+			if (ret = history_db->put(history_db, txn, &key, &data, DB_NOOVERWRITE)) {
+				if (ret == DB_LOCK_DEADLOCK)
+					goto tryagain;
+
+				if (ret != DB_KEYEXIST)
+					panic("history: failed to add history entry: %s", db_strerror(ret));
+			}
+		}
+
+		txn->commit(txn, 0);
+		break;
+
+	tryagain:
+		txn->abort(txn);
+	}
+
+	return 0;
+}
+int
 history_add(mid)
 	char const	*mid;
 {

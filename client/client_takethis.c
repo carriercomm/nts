@@ -22,7 +22,7 @@ typedef struct reply {
 	struct reply	*re_next;
 } reply_t;
 
-static pthread_mutex_t	 reply_mtx;
+static pthread_mutex_t	 reply_mtx = PTHREAD_MUTEX_INITIALIZER;
 static reply_t		*reply_list;
 
 ev_async		 reply_ev;

@@ -26,6 +26,7 @@ int	history_check(char const *mid);
  * Add a message to the history.
  */
 int	history_add(char const *mid);
+int	history_add_multiple(char const **mids);
 
 /*
  * Mark this article as pending.

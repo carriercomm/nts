@@ -31,10 +31,11 @@ typedef struct pending {
 
 static pending_t	*pending_list;
 pthread_mutex_t		 pending_mtx;
+int			 npending;
 
 static void	*do_incoming(void *);
 static void	 incoming_wakeup(struct ev_loop *, ev_async *, int);
-static void	 handle_one_article(pending_t *);
+static int	 handle_one_article(pending_t *);
 static void	 incoming_reply(pending_t *, int);
 
 int
@@ -67,22 +68,38 @@ incoming_wakeup(loop, w, revents)
 	ev_async	*w;
 {
 pending_t	*list, *e, *next;
+const char	**mids, **p;
 
 	pthread_mutex_lock(&pending_mtx);
 	list = pending_list;
 	pending_list = NULL;
+	mids = xcalloc(sizeof(char *), npending + 1);
+	npending = 0;
 	pthread_mutex_unlock(&pending_mtx);
 
+	p = mids;
+
 	for (e = list, next = NULL; e; e = next) {
-		handle_one_article(e);
+		if (handle_one_article(e)) {
+			*p = e->pe_msgid;
+			p++;
+		}
+
 		next = e->pe_next;
+	}
+
+	history_add_multiple(mids);
+
+	for (e = list, next = NULL; e; e = next) {
 		free(e->pe_msgid);
 		free(e->pe_text);
 		free(e);
 	}
+
+	free(mids);
 }
 
-static void
+static int
 handle_one_article(pe)
 	pending_t	*pe;
 {
@@ -92,7 +109,6 @@ int		 filter_result;
 char		*filter_name;
 
 	if ((article = article_parse(pe->pe_text)) == NULL) {
-		history_add(pe->pe_msgid);
 		client_log(LOG_NOTICE, pe->pe_client,
 			   "%s: cannot parse article",
 			   pe->pe_msgid);
@@ -100,7 +116,7 @@ char		*filter_name;
 			    pe->pe_client->cl_server,
 			    '-', "cannot-parse");
 		incoming_reply(pe, IN_ERR_CANNOT_PARSE);
-		return;
+		return 1;
 	}
 
 	age = (time(NULL) - article->art_date);
@@ -114,7 +130,7 @@ char		*filter_name;
 			    pe->pe_client->cl_server,
 			    '-', "too-old");
 		incoming_reply(pe, IN_ERR_TOO_OLD);
-		return;
+		return 0;
 	}
 
 	if (strcasecmp(article->art_msgid, pe->pe_msgid))
@@ -128,10 +144,9 @@ char		*filter_name;
 			    pe->pe_client->cl_server,
 			    '-', "duplicate");
 		incoming_reply(pe, IN_ERR_DUPLICATE);
-		return;
+		return 0;
 	}
 
-	history_add(article->art_msgid);
 	emp_track(article);
 
 	filter_result = filter_article(article, pe->pe_client->cl_strname,
@@ -144,7 +159,7 @@ char		*filter_name;
 			    "filter/%s",
 			    filter_name);
 		incoming_reply(pe, IN_ERR_FILTER);
-		return;
+		return 1;
 	}
 
 	log_article(article->art_msgid, article->art_path,
@@ -158,6 +173,7 @@ char		*filter_name;
 #endif
 	article_free(article);
 	incoming_reply(pe, IN_OK);
+	return 1;
 }
 
 void
@@ -175,6 +191,7 @@ pending_t	*pe = xcalloc(1, sizeof(*pe));
 
 	pe->pe_next = pending_list;
 	pending_list = pe;
+	++npending;
 	ev_async_send(incoming_loop, &incoming_ev);
 
 	pthread_mutex_unlock(&pending_mtx);
