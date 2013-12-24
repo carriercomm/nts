@@ -537,6 +537,21 @@ peer {
 	 * normal peers, or you will waste a lot of bandwidth.)
 	 */
 	adaptive:	95, 90;
+
+	/*
+	 * INN versions <= 2.5.2 have a bug where a command reply sometimes
+	 * includes a junk character at the beginning.  This results in
+	 * errors from NTS like this:
+	 *
+	 * Jan 12 21:25:40 INFO:     feeder: enfer-du-nord[87.98.177.222]:119:
+	 *                           invalid response from command
+	 *                           [b438 <jenflh811am@news1.newsguy.com>]
+	 *
+	 * If you have peers running an affected version of INN, you can
+	 * enable a workaround to detect the problem and parse the reply
+	 * correctly.
+	 */
+	#inn-bug-workaround:    no;
 };
 
 /*

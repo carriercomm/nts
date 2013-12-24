@@ -16,8 +16,7 @@ bindir		= @bindir@
 sbindir		= @sbindir@
 sysconfdir	= @sysconfdir@
 
-VPATH		= ${top_srcdir}		\
-		  ${top_srcdir}/client
+VPATH		= ${top_srcdir}:${top_srcdir}/client
 
 CC		= @CC@
 MAKEDEPEND	= @CC@ -MM
