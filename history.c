@@ -65,6 +65,12 @@ int	ret;
 		return -1;
 	}
 
+	if (ret = history_db->set_re_pad(history_db, '\0')) {
+		nts_log(LOG_ERR, "history: cannot set pad: %s",
+			db_strerror(ret));
+		return -1;
+	}
+
 	if (ret = history_db->set_q_extentsize(history_db, 262144000)) {
 		nts_log(LOG_ERR, "history: cannot set extent size: %s",
 			db_strerror(ret));
