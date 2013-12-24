@@ -299,7 +299,10 @@ unsigned long	 datalen;
 		    (iov[0].iov_len + iov[1].iov_len + iov[2].iov_len))
 			panic("spool: \"%s\": write error: %s",
 			      sf->sf_fname, strerror(errno));
-		ret = fdatasync(sf->sf_fd);
+		if (spool_do_sync)
+			ret = fdatasync(sf->sf_fd);
+		else
+			ret = 0;
 	}
 
 	if (ret == -1)
