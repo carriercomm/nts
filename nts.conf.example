@@ -54,6 +54,15 @@ server "nts.rt.uk.eu.org" {
 	 * to avoid the situation where a peer sends a large number of old
 	 * articles, which have expired from the history, and are then re-sent
 	 * to other peers.
+	 *
+	 * Note: due to limitations in the underlying Berkeley DB library,
+	 * NTS can only store (2^32)-1 (4294967295) entries in the history
+	 * database.  With a 10 day history, that limits theoretical
+	 * throughput to around 5,000 articles per second.  While this is
+	 * unlikely to be a problem in practice, the throughput limit can
+	 * be increased by reducing the history limit.  For example, a 
+	 * history limit of 2 days would allow 25,000 articles/sec, which is
+	 * far more than NTS can actually process on current hardware.
 	 */
 	history-remember:	10 days;	/* default */
 
