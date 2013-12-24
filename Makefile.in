@@ -9,13 +9,15 @@
 
 .SUFFIXES: .c .y .l .o .d .h
 
-VPATH		= @top_srcdir@
 top_srcdir	= @top_srcdir@
 prefix		= @prefix@
 exec_prefix	= @exec_prefix@
 bindir		= @bindir@
 sbindir		= @sbindir@
 sysconfdir	= @sysconfdir@
+
+VPATH		= ${top_srcdir}		\
+		  ${top_srcdir}/client
 
 CC		= @CC@
 MAKEDEPEND	= @CC@ -MM
@@ -31,17 +33,23 @@ LEX		= @LEX@
 
 SRCS		= nts.c		config.c	net.c		client.c	\
 		  server.c	spool.c		log.c		article.c	\
-		  history.c	database.c	hash.c		str.c		\
+		  history.c	database.c	hash.c				\
 		  crc.c		wildmat.c	filter.c	feeder.c	\
 		  charq.c	rfile.c		balloc.c	auth.c		\
 		  crypt.c	strlcpy.c	thread.c	emp.c		\
-		  dns.c		base64.c
+		  dns.c		base64.c					\
+		  client_authinfo.c	client_mode.c	client_listen.c		\
+		  client_pending.c	client_reader.c	client_capab.c		\
+		  client_check.c	client_ihave.c	client_help.c		\
+		  client_tls.c		client_takethis.c			\
+		  client_quit.c							\
+		  incoming.c
 
 EXTRA_SRCS	= @EXTRA_SRCS@
 OBJS		= ${SRCS:.c=.o} ${EXTRA_SRCS:.c=.o}
 
 HDRS		= article.h config.h database.h filter.h history.h net.h	\
-		  str.h client.h crc.h feeder.h hash.h log.h nts.h server.h	\
+		  client.h crc.h feeder.h hash.h log.h nts.h server.h		\
 		  spool.h wildmat.h queue.h charq.h rfile.h balloc.h auth.h	\
 		  crypt.h thread.h emp.h dns.h base64.h
 EXTRA_DIST	= Makefile.in nts.conf.example parser.y lexer.l setup.h.in	\
@@ -86,7 +94,7 @@ lex.yy.o: lex.yy.c y.tab.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
 
 .c.d:
-	$(MAKEDEPEND) $(CPPFLAGS) $< > $@
+	$(MAKEDEPEND) $(CPPFLAGS) $< -o $@
 
 clean:
 	rm -f nts $(OBJS) $(SRCS:.c=.d)  lex.yy.c lex.yy.o y.tab.o y.tab.h y.tab.c

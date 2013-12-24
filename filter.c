@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/filter.c,v 1.19 2012/01/05 14:02:30 river Exp $ */
 
 #include	<string.h>
 #include	<math.h>
@@ -15,7 +14,6 @@
 
 #include	"filter.h"
 #include	"config.h"
-#include	"str.h"
 #include	"wildmat.h"
 #include	"nts.h"
 #include	"log.h"
@@ -99,7 +97,7 @@ filter_group_start(stz, udata)
 	void		*udata;
 {
 filter_group_t	*fg = xcalloc(1, sizeof(*fg));
-	fg->fg_name = str_new_c(stz->cs_title);
+	fg->fg_name = xstrdup(stz->cs_title);
 	SIMPLEQ_INIT(&fg->fg_filters);
 	return fg;
 }
@@ -150,7 +148,7 @@ filter_start(stz, udata)
 	void		*udata;
 {
 filter_t	*filter = xcalloc(1, sizeof(*filter));
-	filter->fi_name = str_new_c(stz->cs_title);
+	filter->fi_name = xstrdup(stz->cs_title);
 	filter->fi_flags |= FILTER_ACT_DUNNO;
 	SIMPLEQ_INIT(&filter->fi_paths);
 	return filter;
@@ -290,8 +288,8 @@ filter_t	*fi = udata;
 
 	for (val = opt->co_value; val; val = val->cv_next) {
 	strlist_entry_t	*sle;
-		sle = bzalloc(ba_strlist);
-		sle->sl_str = str_new_c(val->cv_string);
+		sle = xcalloc(1, sizeof(*sle));
+		sle->sl_str = xstrdup(val->cv_string);
 		SIMPLEQ_INSERT_TAIL(&fi->fi_paths, sle, sl_list);
 	}
 }
@@ -302,7 +300,7 @@ filter_find_by_name(name)
 {
 filter_list_entry_t	*fle;
 	SIMPLEQ_FOREACH(fle, &filter_list, fle_list) {
-		if (str_equal_c(fle->fle_filter->fi_name, name))
+		if (strcmp(fle->fle_filter->fi_name, name) == 0)
 			return fle->fle_filter;
 	}
 	return NULL;
@@ -314,31 +312,10 @@ filter_group_find_by_name(name)
 {
 filter_group_t	*fg;
 	SIMPLEQ_FOREACH(fg, &filter_group_list, fg_list) {
-		if (str_equal_c(fg->fg_name, name))
+		if (strcmp(fg->fg_name, name) == 0)
 			return fg;
 	}
 	return NULL;
-}
-
-static str_t
-next_path(str)
-	str_t	str;
-{
-ssize_t	end;
-str_t	line;
-
-	if (str_length(str) == 0)
-		return NULL;
-
-	if ((end = str_find(str, "!")) == -1) {
-	str_t	ret = str_copy(str);
-		str_remove_start(str, str_length(str));
-		return ret;
-	}
-
-	line = str_copy_len(str, end);
-	str_remove_start(str, end + 1);
-	return line;
 }
 
 static int
@@ -347,21 +324,18 @@ filter_match_path(art, paths)
 	strlist_t	*paths;
 {
 strlist_entry_t	*pe;
-str_t		 ent, pc = str_copy(art->art_path);
+char		*ent, *pc = xstrdup(art->art_path);
 
-	while (ent = next_path(pc)) {
+	while (ent = next_any(&pc, "!")) {
 		SIMPLEQ_FOREACH(pe, paths, sl_list) {
-			if (str_case_equal(ent, pe->sl_str)) {
-				str_free(ent);
-				str_free(pc);
+			if (strcasecmp(ent, pe->sl_str) == 0) {
+				free(pc);
 				return 1;
 			}
 		}
-
-		str_free(ent);
 	}
 
-	str_free(pc);
+	free(pc);
 	return 0;
 }
 
@@ -429,7 +403,7 @@ filter_result_t
 filter_article(art, client, fl, fname)
 	article_t	*art;
 	filter_list_t	*fl;
-	str_t		*fname;
+	char		**fname;
 	char const	*client;
 {
 filter_list_entry_t	*fle;
@@ -462,8 +436,8 @@ filter_list_entry_t	*fle;
 		case FILTER_ACT_DENY:
 			if (fname) {
 				if (fi->fi_flags & FILTER_LOG_REJECTED)
-					nts_log(LOG_INFO, "%s: article %.*s rejected by filter/%.*s",
-						client, str_printf(art->art_msgid), str_printf(fi->fi_name));
+					nts_log(LOG_INFO, "%s: article %s rejected by filter/%s",
+						client, art->art_msgid, fi->fi_name);
 				*fname = fi->fi_name;
 			}
 

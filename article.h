@@ -12,11 +12,12 @@
 #define	NTS_ARTICLE_H
 
 #include	<inttypes.h>
+#include	<time.h>
 
-#include	"str.h"
 #include	"queue.h"
 #include	"spool.h"
 #include	"bitset.h"
+#include	"nts.h"
 
 /*
  * An article.
@@ -43,12 +44,12 @@
 #define	ART_COMPRESSED		0x10000000	/* (spool) Article is compressed */
 
 typedef struct article {
-	str_t		 art_path;
-	str_t		 art_msgid;
-	str_t		 art_content;
-	str_t		 art_body;
-	str_t		 art_posting_host;
-	str_t		 art_newsgroups;
+	char		*art_path;
+	char		*art_msgid;
+	char		*art_content;
+	char		*art_body;
+	char		*art_posting_host;
+	char		*art_newsgroups;
 	strlist_t	 art_groups;
 	int		 art_ngroups;
 	int		 art_nfollowups;
@@ -69,7 +70,7 @@ void		article_run(void);
 /*
  * Parse an article in wire form and return a parsed version.
  */
-article_t	*article_parse(str_t);
+article_t	*article_parse(char const *);
 
 /*
  * Add our name to an article's Path: header
@@ -81,8 +82,8 @@ void		 article_munge_path(article_t *);
  */
 void		 article_free(article_t *art);
 
-int		 article_path_contains(article_t *, str_t);
-int		 valid_msgid(str_t);
+int		 article_path_contains(article_t *, char const *);
+int		 valid_msgid(char const *);
 
 #define	art_deref(art)				\
 	do {					\

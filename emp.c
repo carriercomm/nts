@@ -1,16 +1,16 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011, 2012 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/emp.c,v 1.6 2012/01/10 03:41:09 river Exp $ */
 
 #include	<math.h>
 #include	<stdio.h>
+#include	<assert.h>
 
 #include	<db.h>
 #include	<ev.h>
@@ -173,17 +173,17 @@ DB_TXN		*txn;
 	if (!art->art_posting_host)
 		return;
 
-	if (hash_find(phl_exempt_list, str_begin(art->art_posting_host),
-				str_length(art->art_posting_host)))
+	if (hash_find(phl_exempt_list, art->art_posting_host,
+				strlen(art->art_posting_host)))
 		return;
 
 	bzero(&key, sizeof(key));
-	key.size = str_length(art->art_posting_host) + sizeof(uint16_t);
+	key.size = strlen(art->art_posting_host) + sizeof(uint16_t);
 	key.data = xmalloc(key.size);
 	int16put(key.data, art->art_lines);
 
-	bcopy(str_begin(art->art_posting_host), (char *)key.data + sizeof(uint16_t),
-		str_length(art->art_posting_host));
+	bcopy(art->art_posting_host, (char *)key.data + sizeof(uint16_t),
+		strlen(art->art_posting_host));
 	art_score = emp_score_art(art);
 
 	bzero(&data, sizeof(data));
@@ -268,7 +268,7 @@ char		 dbuf[sizeof(uint64_t) * 2];
 DB_TXN		*txn;
 
 	art_score = emp_score_art(art);
-	crc = crc64(str_begin(art->art_body), str_length(art->art_body));
+	crc = crc64(art->art_body, strlen(art->art_body));
 
 	bzero(&key, sizeof(key));
 	key.data = &crc;

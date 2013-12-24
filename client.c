@@ -21,6 +21,9 @@
 #include	<time.h>
 #include	<errno.h>
 #include	<fcntl.h>
+#include	<pthread.h>
+
+#include	<ev.h>
 
 #include	"setup.h"
 
@@ -46,69 +49,17 @@
 #include	"auth.h"
 #include	"thread.h"
 #include	"emp.h"
-#include	"str.h"
+#include	"incoming.h"
 
-static listener_t *listeners;
-
-static void	 client_accept(int, struct sockaddr *addr, socklen_t len, SSL *ssl, void *udata);
-static void	 client_read(int fd, int what, void *udata);
-static void	 client_error(int fd, int what, int err, void *udata);
-static void	 client_filter_done(void *);
-static void	 client_pause(client_t *);
-static int	 client_unpause(client_t *);
-static void	 client_tls_done(int fd, SSL *ssl, void *udata);
-
-static void *listen_stanza_start(conf_stanza_t *, void *);
-static void  listen_stanza_end(conf_stanza_t *, void *);
-static void  listen_set_ssl(conf_stanza_t *, conf_option_t *, void *, void *);
-static void  listen_set_ssl_key(conf_stanza_t *, conf_option_t *, void *, void *);
-static void  listen_set_ssl_certificate(conf_stanza_t *, conf_option_t *, void *, void *);
-static void  listen_set_ssl_cyphers(conf_stanza_t *, conf_option_t *, void *, void *);
-
-static config_schema_opt_t listen_opts[] = {
-	{ "ssl",		OPT_TYPE_STRING,	listen_set_ssl	},
-	{ "ssl-certificate",	OPT_TYPE_STRING,	listen_set_ssl_certificate },
-	{ "ssl-key",		OPT_TYPE_STRING,	listen_set_ssl_key },
-	{ "ssl-cyphers",	OPT_TYPE_STRING,	listen_set_ssl_cyphers },
-	{ "ssl-ciphers",	OPT_TYPE_STRING,	listen_set_ssl_cyphers }
-};
-
-static config_schema_stanza_t listen_stanza = {
-	"listen", 
-	SC_MANY | SC_REQTITLE, 
-	listen_opts, 
-	listen_stanza_start, 
-	listen_stanza_end
-};
-
-static void	 pending_init(void);
-static int	 pending_check(str_t msgid);
-static void	 pending_add(client_t *, str_t msgid);
-static void	 pending_remove(str_t msgid);
-static void	 pending_remove_client(client_t *);
+static void	 client_readable(struct ev_loop *, ev_io *, int);
+static void	 client_writable(struct ev_loop *, ev_io *, int);
 
 static client_t	*client_new(int fd);
-static void	 client_printf(client_t *, char const *, ...);
 static void	 client_vprintf(client_t *, char const *, va_list ap);
-static void	 client_log(int sev, client_t *, char const *, ...)
-			attr_printf(3, 4);
 static void	 client_vlog(int sev, client_t *, char const *, va_list ap);
-static void	 client_close(client_t *);
-static void	 client_close_impl(void *);
-static void	 client_reader(client_t *);
+static void	 client_handle_line(client_t *, char *);
 
-typedef void (*cmd_handler) (client_t *, str_t, str_t);
-
-static void	c_capabilities(client_t *, str_t, str_t);
-static void	c_mode(client_t *, str_t, str_t);
-static void	c_ihave(client_t *, str_t, str_t);
-static void	c_check(client_t *, str_t, str_t);
-static void	c_quit(client_t *, str_t, str_t);
-static void	c_takethis(client_t *, str_t, str_t);
-static void	c_help(client_t *, str_t, str_t);
-static void	c_authinfo(client_t *, str_t, str_t);
-static void	c_starttls(client_t *, str_t, str_t);
-static void	client_takethis_done(client_t *);
+typedef void (*cmd_handler) (client_t *, char *, char *);
 
 static struct {
 	char const	*cmd;
@@ -128,6 +79,22 @@ static struct {
 
 static balloc_t	*ba_client;
 
+static pthread_t	 client_thread;
+struct ev_loop		*client_loop;
+
+static void	*client_thread_run(void *);
+
+/*
+ * When a client becomes readable or writable, we do nothing but add it to the 
+ * appropriate list.  Then we process all clients at the end of the I/O loop.
+ */
+static client_list_t	client_readable_list;
+static client_list_t	client_writable_list;
+static client_list_t	client_dead_list;
+static ev_prepare	client_prepare;
+
+static void		client_do_io(struct ev_loop *, ev_prepare *, int);
+
 int
 client_init()
 {
@@ -135,152 +102,73 @@ client_init()
 	pending_init();
 	config_add_stanza(&listen_stanza);
 
+	SIMPLEQ_INIT(&client_readable_list);
+	SIMPLEQ_INIT(&client_writable_list);
+	SIMPLEQ_INIT(&client_dead_list);
+
+	ev_prepare_init(&client_prepare, client_do_io);
+	ev_async_init(&reply_ev, client_do_replies);
+
 #ifdef HAVE_OPENSSL
 	SSL_load_error_strings();
 	SSL_library_init();
 #endif
+
+	if (incoming_init() == -1)
+		return -1;
+
+	client_loop = ev_loop_new(ev_supported_backends());
 	return 0;
-}
-
-void *
-listen_stanza_start(stz, udata)
-	conf_stanza_t	*stz;
-	void		*udata;
-{
-listener_t	*li;
-	li = xcalloc(1, sizeof(*li));
-	li->li_address = xstrdup(stz->cs_title);
-	return li;
-}
-
-void
-listen_stanza_end(stz, udata)
-	conf_stanza_t	*stz;
-	void		*udata;
-{
-listener_t	*li = udata;
-
-	if (li->li_ssl_type) {
-#ifdef HAVE_OPENSSL
-	int	ret;
-		if ((li->li_ssl = SSL_CTX_new(SSLv23_server_method())) == NULL) {
-			nts_log(LOG_ERR, "listener \"%s\": cannot create SSL context: %s",
-					stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
-			return;
-		}
-
-		if ((ret = SSL_CTX_use_certificate_file(li->li_ssl,
-				li->li_ssl_cert, SSL_FILETYPE_PEM)) != 1) {
-			nts_log(LOG_ERR, "listener \"%s\": cannot load SSL certificate: %s",
-					stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
-			return;
-		}
-
-		if ((ret = SSL_CTX_use_PrivateKey_file(li->li_ssl,
-				li->li_ssl_key, SSL_FILETYPE_PEM)) != 1) {
-			nts_log(LOG_ERR, "listener \"%s\": cannot load SSL private key: %s",
-					stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
-			return;
-		}
-
-		if (li->li_ssl_cyphers) {
-			if (SSL_CTX_set_cipher_list(li->li_ssl, li->li_ssl_cyphers) == 0) {
-				nts_log(LOG_ERR, "listener \"%s\": no valid cyphers",
-						stz->cs_title);
-				return;
-			}
-		}
-
-		SSL_CTX_set_options(li->li_ssl, SSL_OP_NO_SSLv2);
-#else
-		nts_log(LOG_ERR, "listener \"%s\": SSL support not enabled", stz->cs_title);
-		return;
-#endif
-	}
-
-	li->li_next = listeners;
-	listeners = li;
-}
-
-void
-listen_set_ssl(stz, opt, udata, arg)
-	conf_stanza_t	*stz;
-	conf_option_t	*opt;
-	void		*udata, *arg;
-{
-char const	*v = opt->co_value->cv_string;
-listener_t	*li = udata;
-	if (strcmp(v, "always") == 0) {
-		li->li_ssl_type = SSL_ALWAYS;
-	} else if (strcmp(v, "starttls") == 0) {
-		li->li_ssl_type = SSL_STARTTLS;
-	} else
-		nts_log(LOG_ERR, "\"%s\", line %d: unknown SSL option \"%s\"",
-				opt->co_file, opt->co_lineno, v);
-}
-
-void
-listen_set_ssl_key(stz, opt, udata, arg)
-	conf_stanza_t	*stz;
-	conf_option_t	*opt;
-	void		*udata, *arg;
-{
-char const	*v = opt->co_value->cv_string;
-listener_t	*li = udata;
-	li->li_ssl_key = xstrdup(v);
-}
-
-void
-listen_set_ssl_cyphers(stz, opt, udata, arg)
-	conf_stanza_t	*stz;
-	conf_option_t	*opt;
-	void		*udata, *arg;
-{
-char const	*v = opt->co_value->cv_string;
-listener_t	*li = udata;
-	li->li_ssl_cyphers = xstrdup(v);
-}
-
-void
-listen_set_ssl_certificate(stz, opt, udata, arg)
-	conf_stanza_t	*stz;
-	conf_option_t	*opt;
-	void		*udata, *arg;
-{
-char const	*v = opt->co_value->cv_string;
-listener_t	*li = udata;
-	li->li_ssl_cert = xstrdup(v);
 }
 
 int
 client_run()
 {
-	listener_t	*li;
-	for (li = listeners; li; li = li->li_next) {
-		if (net_listen(li->li_address,
-			       li->li_ssl_type == SSL_ALWAYS?
-			       		li->li_ssl : NULL, 
-			       NET_DEFPRIO, SOCK_STREAM,
-			       client_accept, li) == -1)
-			return -1;
-	}
+	if (client_listen() == -1)
+		return -1;
 
+	incoming_run();
+	pthread_create(&client_thread, NULL, client_thread_run, NULL);
 	return 0;
 }
 
+void *
+client_thread_run(p)
+	void	*p;
+{
+	ev_prepare_start(client_loop, &client_prepare);
+	ev_async_start(client_loop, &reply_ev);
+	ev_run(client_loop, 0);
+	return NULL;
+}
+
 void
-client_accept(fd, addr, addrlen, ssl, udata)
+client_accept(fd, addr, addrlen, ssl, li)
 	struct sockaddr	*addr;
 	socklen_t	 addrlen;
-	void		*udata;
 	SSL		*ssl;
+	listener_t	*li;
 {
-listener_t	*li = udata;
 client_t	*client;
 server_t	*server;
 char		 host[NI_MAXHOST], serv[NI_MAXSERV],
 		 strname[NI_MAXHOST + NI_MAXSERV + 1024];
 int		 one = 1;
+int		 fl;
+
+	if ((fl = fcntl(fd, F_GETFL, 0)) == -1) {
+		nts_log(LOG_ERR, "fcntl(F_GETFL): %s",
+			strerror(errno));
+		close(fd);
+		return;
+	}
+
+	if ((fl = fcntl(fd, F_SETFL, fl | O_NONBLOCK)) == -1) {
+		nts_log(LOG_ERR, "fcntl(F_GETFL): %s",
+			strerror(errno));
+		close(fd);
+		return;
+	}
 
 	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == -1) {
 		nts_log(LOG_ERR, "setsockopt(TCP_NODELAY): %s",
@@ -292,17 +180,25 @@ int		 one = 1;
 	client = client_new(fd);
 	client->cl_listener = li;
 	client->cl_ssl = ssl;
+	client->cl_rdbuf = cq_new();
+	client->cl_wrbuf = cq_new();
 
 	if (ssl)
 		client->cl_flags |= CL_SSL;
-
-	net_open(fd, ssl, NET_DEFPRIO, client_read, client_error, client);
 
 	getnameinfo(addr, addrlen, host, sizeof(host), serv, sizeof(serv),
 			NI_NUMERICHOST | NI_NUMERICSERV);
 
 	bcopy(addr, &client->cl_addr, addrlen);
 	client->cl_addrlen = addrlen;
+
+	ev_io_init(&client->cl_readable, client_readable, fd, EV_READ);
+	client->cl_readable.data = client;
+
+	ev_io_init(&client->cl_writable, client_writable, fd, EV_WRITE);
+	client->cl_writable.data = client;
+
+	ev_io_start(client_loop, &client->cl_readable);
 
 	if ((server = server_find_by_address((struct sockaddr_storage *) addr)) == NULL
 	    && !allow_unauthed) {
@@ -313,7 +209,7 @@ int		 one = 1;
 		} else {
 			client_printf(client, "502 Access denied (%s).\r\n", contact_address);
 		}
-		client_close(client);
+		client_close(client, 1);
 		return;
 	}
 
@@ -322,7 +218,7 @@ int		 one = 1;
 			nts_log(LOG_NOTICE, "%s[%s]:%s: connection rejected: too many connections",
 					server->se_name, host, serv);
 			client_printf(client, "400 Too many connection (%s).\r\n", contact_address);
-			client_close(client);
+			client_close(client, 1);
 			return;
 		}
 		SIMPLEQ_INSERT_TAIL(&server->se_clients, client, cl_list);
@@ -344,90 +240,215 @@ int		 one = 1;
 }
 
 void
-client_read(fd, what, udata)
-	void	*udata;
+client_readable(loop, w, revents)
+	struct ev_loop	*loop;
+	ev_io		*w;
 {
-str_t		 line = NULL;
-client_t	*client = udata;
-int		 n;
+client_t	*cl = w->data;
 
-	while ((n = net_readline(fd, &line)) == 1) {
-		if (client->cl_state == CS_WAIT_COMMAND) {
-		str_t	 command;
-		size_t	 i;
+	if (DEBUG(CIO))
+		client_log(LOG_DEBUG, cl, "client %d becomes readable CL_READABLE=%d CL_DEAD=%d CL_PAUSED=%d", 
+			   cl->cl_fd, cl->cl_flags & CL_READABLE, cl->cl_flags & CL_DEAD,
+			   cl->cl_flags & CL_PAUSED);
 
-			if ((command = str_next_word(line)) == NULL)
-				goto next;
+	if (cl->cl_flags & (CL_DEAD | CL_READABLE))
+		return;
 
-			for (i = 0; i < sizeof(cmds) / sizeof(*cmds); i++) {
-				if (str_case_compare_c(command, cmds[i].cmd))
-					continue;
-
-				if (cmds[i].need_auth &&
-				    (!client->cl_server ||
-				     (client->cl_server->se_username_in
-				      && !client->cl_authenticated))) {
-					client_printf(client, "480 Authentication required.\r\n");
-				} else {
-					cmds[i].handler(client, command, line);
-				}
-
-				str_free(command);
-				goto next;
-			}
-
-			str_free(command);
-			client_printf(client, "500 Unknown command.\r\n");
-		} else if (client->cl_state == CS_TAKETHIS || client->cl_state == CS_IHAVE) {
-			if (str_compare_c(line, ".") == 0) {
-				client_takethis_done(client);
-			} else {
-				if (client->cl_artsize <= max_article_size) {
-					str_append(client->cl_article, line);
-					str_append_c(client->cl_article, "\r\n");
-				}
-
-				client->cl_artsize += str_length(line) + 2;
-			}
-		}
-next:
-		str_free(line);
-
-		if (client->cl_flags & CL_PAUSED)
-			return;
-
-		if (client->cl_state == CS_DEAD) {
-			client_close(client);
-			return;
-		}
-	}
-
-	if (n == -1) {
-		if (errno == 0) {
-			if (log_incoming_connections)
-				client_log(LOG_INFO, client, "disconnected (EOF)");
-		} else {
-			client_log(LOG_INFO, client, "read error: %s",
-				strerror(errno));
-		}
-		client_close(client);
-	}
+	cl->cl_flags |= CL_READABLE;
+	SIMPLEQ_INSERT_TAIL(&client_readable_list, cl, cl_read_list);
 }
 
 void
-client_error(fd, what, err, udata)
-	void	*udata;
+client_writable(loop, w, revents)
+	struct ev_loop	*loop;
+	ev_io		*w;
 {
-client_t	*client = udata;
-	if (err == 0) {
-		if (log_incoming_connections)
-			client_log(LOG_INFO, client, "disconnected (EOF)");
-	} else {
-		client_log(LOG_INFO, client, "%s error callback: %s",
-				what == FDE_READ ? "read" : "write",
-				strerror(err));
+client_t	*cl = w->data;
+
+	if (DEBUG(CIO))
+		client_log(LOG_DEBUG, cl, "client %d becomes writable CL_READABLE=%d CL_DEAD=%d CL_PAUSED=%d", 
+			cl->cl_fd, cl->cl_flags & CL_READABLE, cl->cl_flags & CL_DEAD,
+			cl->cl_flags & CL_PAUSED);
+
+	if (cl->cl_flags & (CL_DEAD | CL_WRITABLE))
+		return;
+
+	cl->cl_flags |= CL_WRITABLE;
+	SIMPLEQ_INSERT_TAIL(&client_writable_list, cl, cl_write_list);
+}
+
+static void
+client_do_io(loop, w, revents)
+	struct ev_loop	*loop;
+	ev_prepare	*w;
+{
+client_t	*cl;
+
+	if (DEBUG(CIO))
+		nts_log(LOG_DEBUG, "client_do_io runs");
+
+	/*
+	 * Try to write data to each client.  If we see an error, mark the
+	 * client as dead; dead clients are cleaned up later.
+	 */
+	while (cl = SIMPLEQ_FIRST(&client_writable_list)) {
+		SIMPLEQ_REMOVE(&client_writable_list, cl, client, cl_write_list);
+
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, "client [%d] on writable list cq_len=%d",
+				   cl->cl_fd, (int) cq_len(cl->cl_wrbuf));
+
+		if (!(cl->cl_flags & CL_WRITABLE))
+			continue;
+
+		cl->cl_flags &= ~CL_WRITABLE;
+
+		if (cq_write(cl->cl_wrbuf, cl->cl_fd) == -1) {
+			client_log(LOG_INFO, cl, "write error: %s",
+					strerror(errno));
+			client_close(cl, 0);
+		}
+
+		/*
+		 * If we still have outstanding writes for the client,
+		 * mark it as paused, so we don't process any input from it.
+		 */
+		if (cq_len(cl->cl_wrbuf)) {
+			if (DEBUG(CIO))
+				client_log(LOG_DEBUG, cl, "client [%d] unflushed, pausing reads",
+					   cl->cl_fd);
+			cl->cl_flags |= CL_PAUSED;
+			ev_io_stop(client_loop, &cl->cl_readable);
+		} else {
+			if (DEBUG(CIO))
+				client_log(LOG_DEBUG, cl, "client [%d] flushed", cl->cl_fd);
+			ev_io_stop(client_loop, &cl->cl_writable);
+			cl->cl_flags &= ~CL_PAUSED;
+
+			if (cl->cl_flags & CL_DRAIN)
+				client_close(cl, 0);
+		}
 	}
-	client_close(client);
+
+	/*
+	 * Handle each readable client.  Ignore dead and paused clients.
+	 */
+	while (cl = SIMPLEQ_FIRST(&client_readable_list)) {
+	int	nl = 0;
+	ssize_t	n;
+
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, 
+				"client %d on read list CL_READABLE=%d CL_DEAD=%d CL_PAUSED=%d", 
+				cl->cl_fd, cl->cl_flags & CL_READABLE, cl->cl_flags & CL_DEAD,
+				cl->cl_flags & CL_PAUSED);
+
+		SIMPLEQ_REMOVE(&client_readable_list, cl, client, cl_read_list);
+
+		if (!(cl->cl_flags & CL_READABLE))
+			continue;
+
+		cl->cl_flags &= ~CL_READABLE;
+
+		if (cl->cl_flags & (CL_DEAD | CL_PAUSED | CL_PENDING)) {
+			ev_io_stop(client_loop, &cl->cl_readable);
+			continue;
+		}
+
+		if ((n = cq_read(cl->cl_rdbuf, cl->cl_fd)) <= 0) {
+			client_close(cl, 0);
+			if (n == 0)
+				client_log(LOG_INFO, cl, "disconnected (EOF)");
+			else
+				client_log(LOG_INFO, cl, "read error: %s",
+					strerror(errno));
+			continue;
+		}
+
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl,
+				"client %d read %d", cl->cl_fd, (int) n);
+
+		for (;;) {
+		char	*ln;
+
+			if (DEBUG(CIO))
+				client_log(LOG_DEBUG, cl, 
+					   "client %d cq_len=%d", cl->cl_fd,
+					   (int) cq_len(cl->cl_rdbuf));
+
+			if ((ln = cq_read_line(cl->cl_rdbuf)) == NULL)
+				break;
+			client_handle_line(cl, ln);
+			free(ln);
+			ln = NULL;
+
+			if (cl->cl_flags & (CL_DEAD | CL_PAUSED | CL_PENDING)) {
+				ev_io_stop(client_loop, &cl->cl_readable);
+				break;
+			}
+		}
+	}
+
+	/*
+	 * Clean up any clients which have become dead.
+	 */
+	while (cl = SIMPLEQ_FIRST(&client_dead_list)) {
+		SIMPLEQ_REMOVE(&client_dead_list, cl, client, cl_dead_list);
+
+		if (!(cl->cl_flags & CL_PENDING))
+			client_destroy(cl);
+	}
+}
+
+static void
+client_handle_line(cl, line)
+	client_t	*cl;
+	char		*line;
+{
+	if (cl->cl_state == CS_WAIT_COMMAND) {
+	char	 *command;
+	size_t	  i;
+
+		if ((command = next_word(&line)) == NULL)
+			return;
+
+		for (i = 0; i < sizeof(cmds) / sizeof(*cmds); i++) {
+			if (strcasecmp(command, cmds[i].cmd))
+				continue;
+
+			if (cmds[i].need_auth &&
+			    (!cl->cl_server ||
+			     (cl->cl_server->se_username_in
+			      && !cl->cl_authenticated))) {
+				client_printf(cl, "480 Authentication required.\r\n");
+			} else {
+				cmds[i].handler(cl, command, line);
+			}
+
+			return;
+		}
+
+		client_printf(cl, "500 Unknown command.\r\n");
+	} else if (cl->cl_state == CS_TAKETHIS || cl->cl_state == CS_IHAVE) {
+		if (strcmp(line, ".") == 0) {
+			client_takethis_done(cl);
+		} else {
+			if (cl->cl_artsize <= max_article_size) {
+				if ((strlen(line) + 3 + cl->cl_artsize) >=
+				    cl->cl_artalloc) {
+					cl->cl_article = xrealloc(cl->cl_article,
+								cl->cl_artalloc * 2);
+					cl->cl_artalloc *= 2;
+				}
+
+				strlcat(cl->cl_article, line, cl->cl_artalloc);
+				strlcat(cl->cl_article, "\r\n", cl->cl_artalloc);
+			}
+
+			cl->cl_artsize += strlen(line) + 2;
+		}
+	}
 }
 
 static void
@@ -465,13 +486,14 @@ int	len;
 		vsnprintf(r, len + 1, fmt, ap);
 	}
 
-	net_write(client->cl_fd, r, len);
+	cq_append(client->cl_wrbuf, r, len);
+	ev_io_start(client_loop, &client->cl_writable);
 
 	if (r != buf)
 		free(r);
 }
 
-static void
+void
 client_printf(client_t *client, char const *fmt, ...)
 {
 va_list	ap;
@@ -480,7 +502,7 @@ va_list	ap;
 	va_end(ap);
 }
 
-static void
+void
 client_log(int sev, client_t *client, char const *fmt, ...)
 {
 va_list	ap;
@@ -496,540 +518,36 @@ client_t	*cl;
 	cl = bzalloc(ba_client);
 	cl->cl_fd = fd;
 	cl->cl_state = CS_WAIT_COMMAND;
+	cl->cl_artalloc = 16384;
+	cl->cl_article = xmalloc(cl->cl_artalloc);
+	cl->cl_article[0] = 0;
 	return cl;
 }
 
-static void
-c_capabilities(client, cmd, line)
-	client_t	*client;
-	str_t		 cmd, line;
+void
+client_close(cl, drain)
+	client_t	*cl;
 {
-	client_printf(client,
-			"101 Capability list:\r\n"
-			"VERSION 2\r\n"
-			"IMPLEMENTATION RT/NTS %s\r\n",
-			PACKAGE_VERSION);
-	if (!auth_enabled || client->cl_authenticated)
-		client_printf(client, "IHAVE\r\nSTREAMING\r\n");
-	if (reader_handler && !client->cl_authenticated && !client->cl_ssl)
-		client_printf(client, "MODE-READER\r\n");
-	if (auth_enabled && !client->cl_authenticated &&
-	    (insecure_auth || (client->cl_flags & CL_SSL)))
-		client_printf(client, "AUTHINFO USER\r\n");
-	if (client->cl_listener->li_ssl && !client->cl_ssl)
-		client_printf(client, "STARTTLS\r\n");
-	client_printf(client, ".\r\n");
-}
+	if (cl->cl_flags & CL_DEAD)
+		return;
 
-static void
-c_check(client, cmd, line)
-	client_t	*client;
-	str_t		 cmd, line;
-{
-str_t	msgid = NULL, junk = NULL;
+	if (drain && cq_len(cl->cl_wrbuf)) {
+		cl->cl_flags |= CL_DRAIN;
 
-	if ((msgid = str_next_word(line)) == NULL || (junk = str_next_word(line))) {
-		client_printf(client, "501 Syntax: CHECK <message-id>\r\n");
-		goto done;
-	}
-
-	if (!valid_msgid(msgid)) {
-		client_printf(client, "438 %.*s\r\n", str_printf(msgid));
-		goto done;
-	}
-
-	if (!server_accept_offer(client->cl_server, msgid)) {
-		++client->cl_server->se_in_refused;
-		client_printf(client, "438 %.*s\r\n", str_printf(msgid));
-		goto done;
-	}
-
-	if (pending_check(msgid)) {
-		++client->cl_server->se_in_deferred;
-		client_printf(client, "431 %.*s\r\n", str_printf(msgid));
-		goto done;
-	}
-
-	if (history_check(msgid)) {
-		++client->cl_server->se_in_refused;
-		client_printf(client, "438 %.*s\r\n", str_printf(msgid));
-	} else {
-		client_printf(client, "238 %.*s\r\n", str_printf(msgid));
-		pending_add(client, msgid);
-	}
-
-done:
-	str_free(msgid);
-	str_free(junk);
-}
-
-static void
-c_ihave(client, cmd, line)
-	client_t	*client;
-	str_t		 cmd, line;
-{
-str_t	msgid = NULL, junk = NULL;
-	if ((msgid = str_next_word(line)) == NULL || (junk = str_next_word(line))) {
-		client_printf(client, "501 Syntax: CHECK <message-id>\r\n");
-		goto done;
-	}
-
-	if (!valid_msgid(msgid)) {
-		client_printf(client, "435 Invalid message-id.\r\n");
-		log_article(msgid, NULL, client->cl_server, '-', "invalid-msgid");
-		goto done;
-	}
-
-	if (pending_check(msgid)) {
-		client->cl_server->se_in_deferred++;
-		client_printf(client, "436 %.*s Try again later.\r\n", str_printf(msgid));
-		goto done;
-	}
-
-	if (!server_accept_offer(client->cl_server, msgid)) {
-		client->cl_server->se_in_rejected++;
-		client_printf(client, "435 %.*s Don't want it.\r\n", str_printf(msgid));
-		log_article(msgid, NULL, client->cl_server, '-', "offer-filter");
-		goto done;
-	}
-
-	if (history_check(msgid)) {
-		client->cl_server->se_in_refused++;
-		client_printf(client, "435 %.*s Already have it.\r\n", str_printf(msgid));
-		log_article(msgid, NULL, client->cl_server, '-', "duplicate");
-	} else {
-		pending_add(client, msgid);
-		client_printf(client, "335 %.*s OK, send it.\r\n", str_printf(msgid));
-		client->cl_msgid = str_copy(msgid);
-		client->cl_artsize = 0;
-		client->cl_state = CS_IHAVE;
-	}
-
-done:
-	str_free(msgid);
-	str_free(junk);
-}
-
-static void
-c_help(client, cmd, line)
-	client_t	*client;
-	str_t		 cmd, line;
-{
-str_t	junk;
-
-	if (junk = str_next_word(line)) {
-		str_free(junk);
-		client_printf(client, "501 Syntax: HELP\r\n");
+		ev_io_stop(client_loop, &cl->cl_readable);
+		cl->cl_flags &= ~CL_READABLE;
 		return;
 	}
 
-	client_printf(client,
-		"100 Command list:\r\n"
-		"  CAPABILITIES\r\n"
-		"  CHECK <msg-id>\r\n"
-		"  HELP\r\n"
-		"  IHAVE <msg-id>\r\n"
-		"  MODE STREAM\r\n"
-		"  QUIT\r\n"
-		"  TAKETHIS <msg-id>\r\n"
-		".\r\n"
-		);
+	ev_io_stop(client_loop, &cl->cl_readable);
+	ev_io_stop(client_loop, &cl->cl_writable);
+
+	cl->cl_flags |= CL_DEAD;
+	SIMPLEQ_INSERT_TAIL(&client_dead_list, cl, cl_dead_list);
 }
 
-static void
-c_starttls(client, cmd, line)
-	client_t	*client;
-	str_t		 cmd, line;
-{
-#ifndef HAVE_OPENSSL
-	client_printf(client, "580 TLS not available.\r\n");
-	return;
-#else
-	if (!client->cl_listener->li_ssl) {
-		client_printf(client, "580 TLS not available.\r\n");
-		return;
-	}
-
-	if (client->cl_ssl) {
-		client_printf(client, "502 TLS already in use.\r\n");
-		return;
-	}
-
-	client_printf(client, "382 OK, start negotiation.\r\n");
-	net_starttls(client->cl_fd, client->cl_listener->li_ssl, client_tls_done);
-#endif
-}
-
-static void
-client_tls_done(fd, ssl, udata)
-	SSL	*ssl;
-	void	*udata;
-{
-client_t	*client = udata;
-	client->cl_ssl = ssl;
-}
-
-static void
-c_authinfo(client, cmd, line)
-	client_t	*client;
-	str_t		 cmd, line;
-{
-str_t	type;
-
-	if (client->cl_authenticated) {
-		client_printf(client, "502 Already authenticated.\r\n");
-		return;
-	}
-	
-	if (!auth_enabled || (client->cl_server &&
-			      !client->cl_server->se_username_in)) {
-		client_printf(client, "502 Authentication unavailable.\r\n");
-		return;
-	}
-
-	if (!insecure_auth && !(client->cl_flags & CL_SSL)) {
-		client_printf(client, "483 TLS required.\r\n");
-		return;
-	}
-
-	if ((type = str_next_word(line)) == NULL) {
-		client_printf(client, "501 Syntax error.\r\n");
-		return;
-	}
-
-	if (str_case_equal_c(type, "USER")) {
-	str_t	un;
-		if ((un = str_next_word(line)) == NULL) {
-			client_printf(client, "501 Syntax error.\r\n");
-			goto done;
-		}
-
-		str_free(client->cl_username);
-		client->cl_username = un;
-		client_printf(client, "381 Enter password.\r\n");
-	} else if (str_case_equal_c(type, "PASS")) {
-	str_t	password;
-
-		if (!client->cl_username) {
-			client_printf(client, "482 Need a username first.\r\n");
-			goto done;
-		}
-
-		if ((password = str_next_word(line)) == NULL) {
-			client_printf(client, "501 Syntax error.\r\n");
-			goto done;
-		}
-
-		if (auth_check(client->cl_username, password)) {
-			if (!client->cl_server) {
-			char		 strname[NI_MAXHOST + NI_MAXSERV + 1024];
-			char		 host[NI_MAXHOST], serv[NI_MAXSERV];
-			server_t	*se;
-
-				SLIST_FOREACH(se, &servers, se_list) {
-					if (se->se_username_in &&
-					    str_equal_c(client->cl_username,
-							se->se_username_in)) {
-						client->cl_server = se;
-						break;
-					}
-				}
-
-				if (!client->cl_server) {
-					client_log(LOG_INFO, client,
-						"authentication as \"%.*s\" failed",
-						str_printf(client->cl_username));
-					client_printf(client, "481 Authentication failed.\r\n");
-					goto done;
-				}
-
-				getnameinfo((struct sockaddr *) &client->cl_addr,
-					client->cl_addrlen,
-					host, sizeof(host), serv, sizeof(serv),
-					NI_NUMERICHOST | NI_NUMERICSERV);
-
-				if (se->se_nconns == se->se_maxconns_in) {
-					nts_log(LOG_NOTICE, "%s[%s]:%s: "
-						"connection rejected: "
-						"too many connections",
-						se->se_name, host, serv);
-					client_printf(client, 
-						"481 Too many connections "
-						"(%s).\r\n", contact_address);
-					goto done;
-				}
-				SIMPLEQ_INSERT_TAIL(&se->se_clients, client, cl_list);
-				++se->se_nconns;
-
-				snprintf(strname, sizeof(strname), "%s[%s]:%s",
-						se->se_name, host, serv);
-				client->cl_strname = xstrdup(strname);
-			}
-
-			client_log(LOG_INFO, client, "authenticated as \"%.*s\"",
-					str_printf(client->cl_username));
-			client_printf(client, "281 Authentication accepted.\r\n");
-			client->cl_authenticated = 1;
-		} else {
-			client_log(LOG_INFO, client, "authentication as \"%.*s\" failed",
-					str_printf(client->cl_username));
-			client_printf(client, "481 Authentication failed.\r\n");
-		}
-		str_free(password);
-	} else {
-		client_printf(client, "501 Syntax error.\r\n");
-	}
-
-done:
-	str_free(type);
-}
-
-static void
-c_takethis(client, cmd, line)
-	client_t	*client;
-	str_t		 cmd, line;
-{
-str_t	msgid = NULL, junk = NULL;
-	if ((msgid = str_next_word(line)) == NULL || (junk = str_next_word(line))) {
-		/*
-		 * We have to close the connection here because the
-		 * client will be expecting to send a message after
-		 * the command.
-		 */
-		client_printf(client, "501 Syntax: TAKETHIS <message-id>\r\n");
-		client_log(LOG_INFO, client, "disconnected (missing message-id in TAKETHIS)");
-		client->cl_state = CS_DEAD;
-		goto done;
-	}
-
-	client->cl_state = CS_TAKETHIS;
-	client->cl_msgid = str_copy(msgid);
-	client->cl_artsize = 0;
-	client->cl_article = str_new_c("");
-
-	pending_add(client, msgid);
-
-done:
-	str_free(msgid);
-	str_free(junk);
-}
-
-static void
-client_takethis_done(client)
-	client_t	*client;
-{
-article_t	*article = NULL;
-int		 rejected = (client->cl_state == CS_TAKETHIS) ? 439 : 437,
-		 age, oldest;
-
-	pending_remove(client->cl_msgid);
-
-	if (client->cl_artsize > max_article_size) {
-		client->cl_server->se_in_rejected++;
-		history_add(client->cl_msgid);
-		client_log(LOG_INFO, client, "%.*s: too large (%d > %d)",
-				str_printf(client->cl_msgid),
-				(int) client->cl_artsize,
-				(int) max_article_size);
-		client_printf(client, "%d %.*s\r\n", rejected, str_printf(client->cl_msgid));
-		log_article(client->cl_msgid, NULL, client->cl_server, '-', "too-large");
-		goto err;
-	}
-
-	if (!valid_msgid(client->cl_msgid)) {
-		client_printf(client, "%d %.*s\r\n", rejected, 
-				str_printf(client->cl_msgid));
-		goto err;
-	}
-
-	if ((article = article_parse(client->cl_article)) == NULL) {
-		history_add(client->cl_msgid);
-		client->cl_server->se_in_rejected++;
-		client_log(LOG_NOTICE, client, "%.*s: cannot parse article", str_printf(client->cl_msgid));
-		client_printf(client, "%d %.*s\r\n", rejected, str_printf(client->cl_msgid));
-		log_article(client->cl_msgid, NULL, client->cl_server, '-', "cannot-parse");
-		goto err;
-	}
-
-	age = (time(NULL) - article->art_date);
-	oldest = history_remember - 60 * 60 * 24;
-	if (age > oldest) {
-		client->cl_server->se_in_rejected++;
-		client_printf(client, "%d %.*s\r\n", rejected, str_printf(article->art_msgid));
-		log_article(article->art_msgid, NULL, client->cl_server, '-', "too-old");
-		client_log(LOG_NOTICE, client, "%.*s: too old (%d days)",
-				str_printf(article->art_msgid), age / 60 / 60 / 24);
-		goto err;
-	}
-
-	if (str_compare(article->art_msgid, client->cl_msgid))
-		client_log(LOG_WARNING, client, "message-id mismatch: %.*s vs %.*s",
-				str_printf(client->cl_msgid), str_printf(article->art_msgid));
-
-	if (history_check(article->art_msgid)) {
-		client->cl_server->se_in_rejected++;
-		client_printf(client, "%d %.*s\r\n", rejected, str_printf(article->art_msgid));
-		log_article(article->art_msgid, NULL, client->cl_server, '-', "duplicate");
-	} else {
-		client->cl_farticle = article;
-		emp_track(client->cl_farticle);
-		client->cl_filter_result = filter_article(client->cl_farticle,
-			client->cl_strname, &client->cl_server->se_filters_in,
-			&client->cl_filter_name);
-		client_filter_done(client);
-		return;
-	}
-
-err:
-	article_free(article);
-
-	client->cl_state = CS_WAIT_COMMAND;
-	str_free(client->cl_msgid);
-	client->cl_msgid = NULL;
-
-	str_free(client->cl_article);
-	client->cl_article = NULL;
-}
-
-static void
-client_pause(client)
-	client_t	*client;
-{
-	client->cl_flags |= CL_PAUSED;
-	net_io_stop(client->cl_fd);
-}
-
-static int
-client_unpause(client)
-	client_t	*client;
-{
-	client->cl_flags &= ~CL_PAUSED;
-	if (client->cl_flags & CL_DEAD) {
-		client_close(client);
-		return -1;
-	}
-
-	return 0;
-}
-
-static void
-client_filter_done(udata)
-	void	*udata;
-{
-client_t	*client = udata;
-article_t	*article;
-int		 rejected;
-
-	article = client->cl_farticle;
-	rejected = (client->cl_state == CS_TAKETHIS) ? 439 : 437;
-
-	history_add(article->art_msgid);
-
-	switch (client->cl_filter_result) {
-	case FILTER_RESULT_DENY:
-		client->cl_server->se_in_rejected++;
-		log_article(article->art_msgid, NULL, client->cl_server, '-',
-				"filter/%.*s", str_printf(client->cl_filter_name));
-		client_printf(client, "%d %.*s\r\n", rejected,
-				str_printf(client->cl_msgid));
-		goto err;
-
-	case FILTER_RESULT_DUNNO:
-	case FILTER_RESULT_PERMIT:
-		log_article(article->art_msgid, article->art_path, 
-				client->cl_server, '+', NULL);
-		article_munge_path(article);
-		client->cl_server->se_in_accepted++;
-		spool_store(article);
-		client_printf(client, "239 %.*s\r\n", str_printf(client->cl_msgid));
-		server_notify_article(article);
-		if (article->art_refs == 0)
-			article_free(article);
-		goto done;
-	}
-
-err:
-	article_free(client->cl_farticle);
-
-done:
-	client->cl_farticle = NULL;
-
-	client->cl_state = CS_WAIT_COMMAND;
-	str_free(client->cl_msgid);
-	client->cl_msgid = NULL;
-
-	str_free(client->cl_article);
-	client->cl_article = NULL;
-
-	net_io_start(client->cl_fd);
-	client_read(client->cl_fd, FDE_READ, client);
-}
-
-static void
-c_quit(client, cmd, line)
-	client_t	*client;
-	str_t		 cmd, line;
-{
-str_t	junk = NULL;
-	if (junk = str_next_word(line)) {
-		str_free(junk);
-		client_printf(client, "501 Syntax: QUIT\r\n");
-		return;
-	}
-
-	if (log_incoming_connections)
-		client_log(LOG_INFO, client, "disconnected (QUIT)");
-	client_printf(client, "205 Closing connection.\r\n");
-	client->cl_state = CS_DEAD;
-}
-
-static void
-c_mode(client, cmd, line)
-	client_t	*client;
-	str_t		 cmd, line;
-{
-str_t	mode = NULL, junk = NULL;
-	if ((mode = str_next_word(line)) == NULL || (junk = str_next_word(line))) {
-		client_printf(client, "501 Syntax: MODE STREAM\r\n");
-		goto done;
-	}
-
-	if (str_case_equal_c(mode, "STREAM")) {
-		client_printf(client, "203 Streaming permitted.\r\n");
-	} else if (str_case_equal_c(mode, "READER")) {
-		if (reader_handler) {
-			client_reader(client);
-		} else {
-			client_printf(client, "502 Transit service only.\r\n");
-		}
-		client->cl_state = CS_DEAD;
-	} else 
-		client_printf(client, "501 Unknown MODE variant.\r\n");
-
-done:
-	str_free(mode);
-	str_free(junk);
-}
-
-static void
-client_close(client)
-	client_t	*client;
-{
-	net_io_stop(client->cl_fd);
-
-	if (client->cl_flags & CL_PAUSED) {
-		client->cl_flags |= CL_DEAD;
-		return;
-	}
-
-	if (client->cl_flags & CL_FREE)
-		return;
-	client->cl_flags |= CL_FREE;
-	net_soon(client_close_impl, client);
-}
-
-static void
-client_close_impl(udata)
+void
+client_destroy(udata)
 	void	*udata;
 {
 client_t	*client = udata;
@@ -1039,87 +557,12 @@ client_t	*client = udata;
 	}
 
 	pending_remove_client(client);
-	net_close(client->cl_fd);
-	str_free(client->cl_msgid);
-	str_free(client->cl_article);
-	str_free(client->cl_username);
+	free(client->cl_msgid);
+	free(client->cl_article);
+	free(client->cl_username);
 	free(client->cl_strname);
+	cq_free(client->cl_wrbuf);
+	cq_free(client->cl_rdbuf);
+	close(client->cl_fd);
 	bfree(ba_client, client);
-}
-
-static void
-client_reader(client)
-	client_t	*client;
-{
-	if (reader_handoff(client->cl_fd) == -1)
-		client_log(LOG_ERR, client, "cannot complete reader handoff: %s",
-				strerror(errno));
-}
-
-/* ===
- * Pending defer list.
- */
-
-static hash_table_t	*pending_list;
-
-static void
-pending_init(void)
-{
-	if (!defer_pending)
-		return;
-
-	pending_list = hash_new(128, NULL, NULL, NULL);
-}
-
-static void
-pending_add(client, msgid)
-	client_t	*client;
-	str_t		 msgid;
-{
-	if (!defer_pending)
-		return;
-
-	hash_insert(pending_list, str_begin(msgid), str_length(msgid), client);
-}
-
-static int
-pending_check(msgid)
-	str_t		 msgid;
-{
-	if (!defer_pending)
-		return 0;
-
-	return hash_find(pending_list, str_begin(msgid), str_length(msgid)) != NULL;
-}
-
-static void
-pending_remove(msgid)
-	str_t	msgid;
-{
-	if (!defer_pending)
-		return;
-
-	hash_remove(pending_list, str_begin(msgid), str_length(msgid));
-}
-
-static void
-pending_remove_client(client)
-	client_t	*client;
-{
-hash_item_t	*ie, *next;
-size_t		 i;
-
-	if (!defer_pending)
-		return;
-
-
-	for (i = 0; i < pending_list->ht_nbuckets; i++) {
-		LIST_FOREACH_SAFE(ie, &pending_list->ht_buckets[i], hi_link, next) {
-			if (ie->hi_data == client) {
-				LIST_REMOVE(ie, hi_link);
-				free(ie->hi_key);
-				free(ie);
-			}
-		}
-	}
 }

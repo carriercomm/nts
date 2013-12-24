@@ -356,10 +356,12 @@ address_t	*addr;
 		return;
 
 	free(list);
+	list = NULL;
 
 	while (addr = SIMPLEQ_FIRST(&se->se_accept_addrs)) {
 		SIMPLEQ_REMOVE_HEAD(&se->se_accept_addrs, ad_list);
 		free(addr);
+		addr = NULL;
 	}
 
 	while (addr = SIMPLEQ_FIRST(&se->se_resolvelist)) {
@@ -405,6 +407,7 @@ server_t	*server = udata;
 conf_val_t	*v = opt->co_value;
 
 	free(server->se_port);
+	server->se_port = NULL;
 
 	if (v->cv_type == CV_STRING)
 		server->se_port = xstrdup(v->cv_string);
@@ -480,8 +483,8 @@ conf_val_t	*val;
 
 	for (val = opt->co_value; val; val = val->cv_next) {
 	strlist_entry_t	*sle;
-		sle = bzalloc(ba_strlist);
-		sle->sl_str = str_new_c(val->cv_string);
+		sle = xcalloc(1, sizeof(*sle));
+		sle->sl_str = xstrdup(val->cv_string);
 		SIMPLEQ_INSERT_TAIL(&se->se_offer_filters, sle, sl_list);
 	}
 }
@@ -740,27 +743,6 @@ hostlist_entry_t	*hl = xcalloc(1, sizeof(*hl));
 	SLIST_INSERT_HEAD(&se->se_exclude, hl, hl_list);
 }
 
-static str_t
-next_path(str)
-	str_t	str;
-{
-ssize_t end;
-str_t	line;
-
-	if (str_length(str) == 0)
-		return NULL;
-
-	if ((end = str_find(str, "!")) == -1) {
-	str_t	ret = str_copy(str);
-		str_remove_start(str, str_length(str));
-		return ret;
-	}
-
-	line = str_copy_len(str, end);
-	str_remove_start(str, end + 1);
-	return line;
-}
-
 int
 server_wants_article(se, art)
 	server_t	*se;
@@ -768,22 +750,21 @@ server_wants_article(se, art)
 {
 hostlist_entry_t	*hl;
 
-	if (se->se_max_size && (str_length(art->art_content) > se->se_max_size))
+	if (se->se_max_size && (strlen(art->art_content) > se->se_max_size))
 		return 0;
 
 	SLIST_FOREACH(hl, &se->se_exclude, hl_list) {
-	str_t	path = str_copy(art->art_path), ent;
+	char	*path_ = xstrdup(art->art_path), *path = path_, *ent;
 
-		while (ent = next_path(path)) {
-			if (str_equal_c(ent, hl->hl_host)) {
-				str_free(path);
-				str_free(ent);
+		while (ent = next_any(&path, "!")) {
+			if (strcasecmp(ent, hl->hl_host) == 0) {
+				free(path_);
+				path = path_ = NULL;
 				return 0;
 			}
-
-			str_free(ent);
 		}
-		str_free(path);
+		free(path_);
+		path = path_ = NULL;
 	}
 
 	if (filter_article(art, NULL, &se->se_filters_out, NULL) == FILTER_RESULT_DENY)
@@ -804,11 +785,11 @@ server_t	*se;
 int
 server_accept_offer(se, msgid)
 	server_t	*se;
-	str_t		 msgid;
+	const char	*msgid;
 {
 strlist_entry_t	*sle;
 	SIMPLEQ_FOREACH(sle, &se->se_offer_filters, sl_list) {
-		if (str_match(msgid, sle->sl_str))
+		if (strmatch(msgid, sle->sl_str))
 			return 0;
 	}
 	return 1;
@@ -891,8 +872,8 @@ unsigned char    dbuf[4 + 8];
         key.data = dbuf;
 
         bzero(&data, sizeof(data));
-	data.size = str_length(art->art_msgid);
-	data.data = str_begin(art->art_msgid);
+	data.size = strlen(art->art_msgid);
+	data.data = art->art_msgid;
 
         if (ret = se->se_q->put(se->se_q, txn, &key, &data, 0))
                 panic("server: cannot write to q db: %s",
@@ -910,7 +891,7 @@ void
 qefree(qe)
 	qent_t	*qe;
 {
-	str_free(qe->qe_msgid);
+	free(qe->qe_msgid);
 	free(qe);
 }
 
@@ -960,8 +941,8 @@ DB_TXN          *txn;
         bzero(&key, sizeof(key));
         bzero(&data, sizeof(data));
 
-	data.size = str_length(qe->qe_msgid);
-	data.data = str_begin(qe->qe_msgid);
+	data.size = strlen(qe->qe_msgid);
+	data.data = qe->qe_msgid;
 
         pack(dbuf, "uU", qe->qe_pos.sp_id, qe->qe_pos.sp_offset);
         key.size = sizeof(dbuf);
@@ -979,4 +960,5 @@ DB_TXN          *txn;
 
         txn->commit(txn, 0);
         qefree(qe);
+	qe = NULL;
 }

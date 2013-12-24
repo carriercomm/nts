@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011, 2012 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/auth.c,v 1.5 2012/01/07 16:47:15 river Exp $ */
 
 #include	<stdlib.h>
 #include	<errno.h>
@@ -36,15 +35,15 @@ typedef enum {
 } pwhash_t;
 
 typedef struct user {
-	str_t	u_username;
-	str_t	u_password;
+	char	*u_username;
+	char	*u_password;
 } user_t;
 
 static user_t	*users;
 static size_t	 nusers;
 
-static user_t	*find_user(str_t username);
-static void	 add_user(str_t, str_t);
+static user_t	*find_user(char const *username);
+static void	 add_user(char const *, char const *);
 
 static pwhash_t	 default_algo = H_BF;
 
@@ -83,30 +82,19 @@ auth_run()
 
 int
 auth_check(u, p)
-	str_t	u, p;
+	char const	*u, *p;
 {
 user_t	*user;
-char	*cpw, *chash;
 int	 okay = 0;
 
 	if ((user = find_user(u)) == NULL)
 		return 0;
 
-	cpw = xmalloc(str_length(p) + 1);
-	bcopy(str_begin(p), cpw, str_length(p));
-	cpw[str_length(p)] = '\0';
-
-	chash = xmalloc(str_length(user->u_password) + 1);
-	bcopy(str_begin(user->u_password), chash, str_length(user->u_password));
-	chash[str_length(user->u_password)] = '\0';
-
-	if (strncmp(chash, "$plain$", 7) == 0)
-		okay = (strcmp(cpw, chash + 7) == 0);
-	else if (strcmp(nts_crypt(cpw, chash), chash) == 0)
+	if (strncmp(user->u_password, "$plain$", 7) == 0)
+		okay = (strcmp(p, user->u_password + 7) == 0);
+	else if (strcmp(nts_crypt(p, user->u_password), user->u_password) == 0)
 		okay = 1;
 
-	free(cpw);
-	free(chash);
 	return okay;
 }
 
@@ -114,38 +102,17 @@ static int
 user_compare(a, b)
 	const void	*a, *b;
 {
-const struct str	*un = a;
-user_t const		*user = b;
+char const	*un = a;
+user_t const	*user = b;
 
-	return str_compare(un, user->u_username);
+	return strcmp(un, user->u_username);
 }
 
 static user_t *
 find_user(un)
-	str_t	un;
+	char const	*un;
 {
 	return bsearch(un, &users[0], nusers, sizeof(user_t), user_compare);
-}
-
-static str_t
-next_colon(str)
-	str_t	str;
-{
-ssize_t	end;
-str_t	line;
-
-	if (str_length(str) == 0)
-		return NULL;
-
-	if ((end = str_find(str, ":")) == -1) {
-	str_t	ret = str_copy(str);
-		str_remove_start(str, str_length(str));
-		return ret;
-	}
-
-	line = str_copy_len(str, end);
-	str_remove_start(str, end + 1);
-	return line;
 }
 
 static void
@@ -163,33 +130,27 @@ int	 lineno = 0;
 	}
 
 	for (i = 0; i < nusers; ++i) {
-		str_free(users[i].u_username);
-		str_free(users[i].u_password);
+		free(users[i].u_username);
+		free(users[i].u_password);
 	}
 	free(users);
 
 	while (fgets(line_, sizeof(line_), f)) {
-	str_t	line;
-	str_t	username = NULL, inpw = NULL;
+	char	*username = NULL, *inpw = NULL;
+	char	*line = line_;
 
-		line_[strlen(line_) - 1] = '\0';
-		line = str_new_c(line_);
+		line[strlen(line) - 1] = '\0';
 
 		lineno++;
 
-		if ((username = next_colon(line)) == NULL ||
-		    (inpw = next_colon(line)) == NULL) {
+		if ((username = next_any(&line, ":")) == NULL ||
+		    (inpw = next_any(&line, ":")) == NULL) {
 			nts_log(LOG_ERR, "auth: \"%s\", line %d: syntax error",
 					auth_pwfile, lineno);
-			goto err;
+			return;
 		}
 
 		add_user(username, inpw);
-
-err:
-		str_free(line);
-		str_free(username);
-		str_free(inpw);
 	}
 
 	qsort(users, nusers, sizeof(*users), user_compare);
@@ -197,26 +158,22 @@ err:
 
 static void
 add_user(un, pw)
-	str_t	un, pw;
+	char const	*un, *pw;
 {
 	users = xrealloc(users, sizeof(*users) * (nusers + 1));
-	users[nusers].u_username = str_copy(un);
-	users[nusers].u_password = str_copy(pw);
+	users[nusers].u_username = xstrdup(un);
+	users[nusers].u_password = xstrdup(pw);
 	++nusers;
 }
 
 static char crypt_nrounds[64];
 
-str_t
+char *
 auth_hash_password(pw)
-	str_t	pw;
+	char const	*pw;
 {
-char	*cpw, *crypted;
+char	*crypted;
 char	 salt[64];
-
-	cpw = xmalloc(str_length(pw) + 1);
-	bcopy(str_begin(pw), cpw, str_length(pw));
-	cpw[str_length(pw)] = '\0';
 
 	switch (default_algo) {
 	case H_BF:	nts_gensalt(salt, sizeof(salt), "blowfish", crypt_nrounds); break;
@@ -226,9 +183,8 @@ char	 salt[64];
 	case H_SHA1:	nts_gensalt(salt, sizeof(salt), "sha1", crypt_nrounds); break;
 	}
 
-	crypted = nts_crypt(cpw, salt);
-	free(cpw);
-	return str_new_c(crypted);
+	crypted = nts_crypt(pw, salt);
+	return xstrdup(crypted);
 }
 
 static void

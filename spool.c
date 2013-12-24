@@ -220,7 +220,7 @@ spool_file_t	*sf = &spool_files[spool_cur_file];
 unsigned char	*hdr;
 unsigned char	 hdrbuf[SPOOL_HDR_SIZE * 2];
 int		 hdrpos = 0;
-size_t		 artlen = str_length(art->art_content);
+size_t		 artlen = strlen(art->art_content);
 int		 ret;
 unsigned char	*data;
 unsigned long	 datalen;
@@ -255,17 +255,17 @@ unsigned long	 datalen;
 	art->art_flags &= ~ART_COMPRESSED;
 
 	if (spool_compress && !(art->art_flags & ART_TYPE_YENC)) {
-		datalen = compressBound(str_length(art->art_content));
+		datalen = compressBound(strlen(art->art_content));
 		data = xmalloc(datalen);
 
-		if (compress2(data, &datalen, str_begin(art->art_content),
-			      str_length(art->art_content), spool_compress) != Z_OK)
+		if (compress2(data, &datalen, (unsigned char *)art->art_content,
+			      strlen(art->art_content), spool_compress) != Z_OK)
 			panic("spool: compress failed");
 
 		art->art_flags |= ART_COMPRESSED;
 	} else {
-		data = str_begin(art->art_content);
-		datalen = str_length(art->art_content);
+		data = (unsigned char *) art->art_content;
+		datalen = strlen(art->art_content);
 	}
 
 	int32put(hdr + hdrpos, SPOOL_MAGIC);			hdrpos += 4;
@@ -305,8 +305,10 @@ unsigned long	 datalen;
 	if (ret == -1)
 		panic("spool: \"%s\": cannot sync: %s", sf->sf_fname, strerror(errno));
 
-	if (art->art_flags & ART_COMPRESSED)
+	if (art->art_flags & ART_COMPRESSED) {
 		free(data);
+		data = NULL;
+	}
 
 	art->art_spool_pos.sp_id = spool_base + spool_cur_file;
 	art->art_spool_pos.sp_offset = sf->sf_size;
@@ -322,14 +324,15 @@ spool_fetch(spid, spos)
 	spool_offset_t	 spos;
 {
 spool_header_t	 hdr;
-str_t		 text;
+char		*text;
 article_t	*art;
 
 	if (spool_fetch_text(spid, spos, &hdr, &text) == -1)
 		return NULL;
 
 	art = article_parse(text);
-	str_free(text);
+	free(text);
+	text = NULL;
 
 	if (!art)
 		return NULL;
@@ -347,13 +350,13 @@ article_t	*art;
 
 int
 spool_fetch_text(spid, spos, hdr, text)
-	spool_id_t	 spid;
-	spool_offset_t	 spos;
-	spool_header_t	*hdr;
-	str_t		*text;
+	spool_id_t	  spid;
+	spool_offset_t	  spos;
+	spool_header_t	 *hdr;
+	char		**text;
 {
 char		*artdata;
-str_t		 artstr;
+char		*artstr;
 spool_file_t	*sf;
 size_t		 artloc;
 
@@ -405,8 +408,10 @@ size_t		 artloc;
 	if (spool_check_crc && (hdr->sa_flags & ART_CRC)) {
 		if (crc64(artdata, hdr->sa_len) != hdr->sa_crc) {
 			nts_log(LOG_WARNING, "spool: \"%s\": bad CRC", sf->sf_fname);
-			if (spool_method == M_FILE)
+			if (spool_method == M_FILE) {
 				free(artdata);
+				artdata = NULL;
+			}
 			errno = EIO;
 			return -1;
 		}
@@ -425,26 +430,33 @@ size_t		 artloc;
 			nts_log(LOG_WARNING, "spool: \"%s\": uncompress "
 					     "failed: %s", sf->sf_fname, zError(ret));
 
-			if (spool_method == M_FILE)
+			if (spool_method == M_FILE) {
 				free(artdata);
+				artdata = NULL;
+			}
 
 			free(data);
+			data = NULL;
+
 			errno = EIO;
 			return -1;
 		}
 
-		artstr = str_new_cl((char *) data, datasize);
+		artstr = xmalloc(datasize + 1);
+		bcopy(data, artstr, datasize);
+		artstr[datasize] = 0;
 		free(data);
+		data = NULL;
 	} else {
-		if (spool_method == M_MMAP)
-			artstr = str_new_cl_nocopy(artdata, hdr->sa_len);
-		else {
-			artstr = str_new_cl(artdata, hdr->sa_len);
-		}
+		artstr = xmalloc(hdr->sa_len);
+		bcopy(artdata, artstr, hdr->sa_len + 1);
+		artstr[hdr->sa_len] = 0;
 	}
 
-	if (spool_method == M_FILE)
+	if (spool_method == M_FILE) {
 		free(artdata);
+		artdata = NULL;
+	}
 
 	*text = artstr;
 	return 0;
@@ -556,11 +568,13 @@ ssize_t		n;
 		}
 
 		free(data);
+		data = NULL;
 		pos += hdr.sa_hdr_len + hdr.sa_len;
 		continue;
 
 error:
 		free(data);
+		data = NULL;
 
 		nts_log(LOG_WARNING, "spool: \"%s\": invalid "
 			"article found at %lu",
@@ -851,6 +865,7 @@ int		 errors = 0;
 					path);
 				++errors;
 				free(atext);
+				atext = NULL;
 				goto next;
 			}
 
@@ -860,10 +875,12 @@ int		 errors = 0;
 					"article (%"PRIx64")\n", path, crc, hdr.sa_crc);
 				++errors;
 				free(atext);
+				atext = NULL;
 				continue;
 			}
 
 			free(atext);
+			atext = NULL;
 
 			rawbytes += hdr.sa_len;
 			artbytes += hdr.sa_text_len;

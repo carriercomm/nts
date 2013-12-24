@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011, 2012 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/charq.h,v 1.6 2012/01/09 18:18:47 river Exp $ */
 
 #ifndef	NTS_CHARQ_H
 #define	NTS_CHARQ_H
@@ -15,7 +14,6 @@
 #include	<sys/types.h>
 
 #include	"queue.h"
-#include	"str.h"
 
 /*
  * A charq is a simple char buffer that allows efficient addition of data at the
@@ -60,6 +58,6 @@ void	 cq_append(charq_t *, char const *, size_t);
 void	 cq_remove_start(charq_t *, size_t);
 void	 cq_extract_start(charq_t *, void *buf, size_t);
 
-str_t	 cq_read_line(charq_t *);
+char	 *cq_read_line(charq_t *);
 
 #endif	/* !NTS_CHARQ_H */

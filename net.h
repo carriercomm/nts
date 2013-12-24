@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/net.h,v 1.16 2012/01/09 18:35:54 river Exp $ */
 
 #ifndef	NTS_NET_H
 #define	NTS_NET_H
@@ -22,7 +21,7 @@
 # include	<openssl/ssl.h>
 #endif
 
-#include	"str.h"
+#include	"queue.h"
 
 #define	NET_STRLEN 64
 
@@ -77,7 +76,7 @@ void	 net_connect(int prio, struct sockaddr *addr, socklen_t addrlen,
 		net_handler read_handler, void *udata);
 void	 net_write(int fd, void const *, size_t);
 ssize_t	 net_read(int fd, void *, size_t);
-int	 net_readline(int fd, str_t *);
+int	 net_readline(int fd, char **);
 void	 net_io_stop(int);
 void	 net_io_start(int);
 void	 net_starttls(int, SSL_CTX *, net_tls_done_handler);

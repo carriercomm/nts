@@ -805,10 +805,10 @@ int	fl;
 int
 net_readline(fd, str)
 	int	 fd;
-	str_t	*str;
+	char	**str;
 {
-fde_t		*fde = fd_table[fd];
-str_t		 line;
+fde_t	*fde = fd_table[fd];
+char	*line;
 
 	if (fde->fde_flags & FDE_DEAD)
 		return 0;

@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/log.c,v 1.8 2012/01/02 01:33:49 river Exp $ */
 
 #include	<sys/types.h>
 #include	<sys/stat.h>
@@ -180,7 +179,7 @@ int	 len;
 }
 
 void
-log_article(str_t msgid, str_t path, server_t *server, char status, char const *reason, ...)
+log_article(char const *msgid, char const *path, server_t *server, char status, char const *reason, ...)
 {
 char		 rbuf[128] = {};
 time_t		 now;
@@ -200,14 +199,14 @@ char		 tbuf[128];
 
 	if (incoming_log) {
 		rfcheck(incoming_log);
-		rfprintf(incoming_log, "%s %s %c %.*s %s\n",
+		rfprintf(incoming_log, "%s %s %c %s %s\n",
 				tbuf, server->se_name, status,
-				str_printf(msgid), rbuf);
+				msgid, rbuf);
 	}
 
 	if (path && path_log) {
 		rfcheck(path_log);
-		rfprintf(path_log, "Path: %.*s\n", str_printf(path));
+		rfprintf(path_log, "Path: %s\n", path);
 	}
 }	
 

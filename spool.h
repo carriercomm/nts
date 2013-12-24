@@ -1,20 +1,17 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/spool.h,v 1.8 2012/01/10 00:22:32 river Exp $ */
 
 #ifndef	SPOOL_H
 #define	SPOOL_H
 
 #include	<inttypes.h>
-
-#include	"str.h"
 
 struct article;
 
@@ -66,7 +63,7 @@ int	spool_check(void);
  * Fetch an article from the spool.
  */
 struct article	*spool_fetch(spool_id_t, spool_offset_t);
-int		 spool_fetch_text(spool_id_t, spool_offset_t, spool_header_t *hdr, str_t*);
+int		 spool_fetch_text(spool_id_t, spool_offset_t, spool_header_t *hdr, char **);
 void		 spool_get_cur_pos(spool_pos_t *);
 
 void	spool_shutdown(void);

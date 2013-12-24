@@ -37,6 +37,12 @@ AC_ARG_ENABLE([ssl],
 	       fi],
 	      [use_ssl=yes])
 
+AC_ARG_ENABLE([debug],
+	      [AS_HELP_STRING([--disable-debug], [omit debugging code])],
+	      [if ! test "$enableval" = yes; then
+		       CPPFLAGS="$CPPFLAGS -DNDEBUG"
+	       fi], [])
+
 if test "$use_ssl" = yes; then
 	AC_CHECK_LIB([ssl], [SSL_CTX_new],
 	     [LIBS="$LIBS -lssl -lcrypto"

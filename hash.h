@@ -1,19 +1,17 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/hash.h,v 1.4 2012/01/10 17:14:13 river Exp $ */
 
 #ifndef	NTS_HASH_H
 #define NTS_HASH_H
 
 #include	"queue.h"
-#include	"str.h"
 
 typedef struct hash_item {
 	LIST_ENTRY(hash_item)	 hi_link;
@@ -37,7 +35,7 @@ typedef struct hash_table {
 } hash_table_t;
 
 typedef struct hash_entry {
-	str_t	 he_key;
+	char	*he_key;
 	void	*he_data;
 } hash_entry_t;
 
@@ -45,7 +43,7 @@ hash_table_t	*hash_new(size_t, hash_func, hash_compare_func,
 			  hash_free_func data_free);
 void		 hash_free(hash_table_t *);
 void		*hash_find(hash_table_t *, void const *, size_t);
-int		 hash_insert(hash_table_t *, void *, size_t, void *);
+int		 hash_insert(hash_table_t *, void const *, size_t, void *);
 void		*hash_remove(hash_table_t *, void const *, size_t);
 
 #endif	/* !NTS_HASH_H */

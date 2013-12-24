@@ -8,17 +8,19 @@
  * warranty.
  */
 
-#ifndef	NTS_AUTH_H
-#define	NTS_AUTH_H
+#ifndef NTS_INCOMING_H
+#define NTS_INCOMING_H
 
-extern int	auth_enabled;
-extern int	allow_unauthed;
-extern int	insecure_auth;
+#define	IN_OK			0
+#define	IN_ERR_TOO_OLD		1
+#define	IN_ERR_FILTER		2
+#define	IN_ERR_DUPLICATE	3
+#define	IN_ERR_CANNOT_PARSE	4
 
-int	auth_init(void);
-int	auth_run(void);
+struct client;
+void	process_article(char const *, char const *, struct client *);
 
-int	 auth_check(char const *username, char const *password);
-char	*auth_hash_password(char const *pw);
+int	incoming_init(void);
+void	incoming_run(void);
 
-#endif	/* !NTS_AUTH_H */
+#endif	/* !NTS_INCOMING_H */

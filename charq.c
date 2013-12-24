@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011, 2012 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/charq.c,v 1.10 2012/01/09 18:18:47 river Exp $ */
 
 #include	<sys/uio.h>
 
@@ -15,26 +14,21 @@
 #include	<strings.h>
 #include	<unistd.h>
 #include	<errno.h>
+#include	<assert.h>
 
 #include	"charq.h"
 #include	"nts.h"
 #include	"balloc.h"
-#include	"str.h"
-
-static balloc_t	*ba_charq, *ba_cqe;
 
 void
 cq_init()
 {
-	ba_charq = balloc_new(sizeof(charq_t), 64, "charq");
-	ba_cqe = balloc_new(sizeof(charq_ent_t), 32, "cqe");
 }
 
 charq_t *
 cq_new()
 {
-charq_t		*cq;
-	cq = bzalloc(ba_charq);
+charq_t		*cq = xcalloc(1, sizeof(*cq));
 	TAILQ_INIT(&cq->cq_ents);
 	return cq;
 }
@@ -46,9 +40,9 @@ cq_free(cq)
 charq_ent_t	*cqe;
 	while (cqe = TAILQ_FIRST(&cq->cq_ents)) {
 		TAILQ_REMOVE(&cq->cq_ents, cqe, cqe_list);
-		bfree(ba_cqe, cqe);
+		free(cqe);
 	}
-	bfree(ba_charq, cq);
+	free(cq);
 }
 
 void
@@ -68,7 +62,7 @@ cq_append(cq, data, sz)
 	while (sz) {
 	charq_ent_t	*new;
 	size_t		 todo = sz > CHARQ_BSZ ? CHARQ_BSZ : sz;
-		new = balloc(ba_cqe);
+		new = xcalloc(1, sizeof(*new));
 		bcopy(data, new->cqe_data, todo);
 		cq->cq_len += todo;
 		sz -= todo;
@@ -86,7 +80,7 @@ cq_remove_start(cq, sz)
 	while (sz >= (CHARQ_BSZ - cq->cq_offs)) {
 	charq_ent_t	*n = cq_first_ent(cq);
 		TAILQ_REMOVE(&cq->cq_ents, n, cqe_list);
-		bfree(ba_cqe, n);
+		free(n);
 		cq->cq_len -= (CHARQ_BSZ - cq->cq_offs);
 		sz -= (CHARQ_BSZ - cq->cq_offs);
 		cq->cq_offs = 0;
@@ -151,13 +145,12 @@ cq_read(cq, fd)
 {
 ssize_t	n;	
 	if (cq_left(cq) == 0) {
-	charq_ent_t	*cqe;
-		cqe = bzalloc(ba_cqe);
+	charq_ent_t	*cqe = xcalloc(1, sizeof(*cqe));;
 		n = read(fd, cqe->cqe_data, CHARQ_BSZ);
 		if (n <= 0) {
 			if (n == -1 && errno == EINVAL)
 				abort();
-			bfree(ba_cqe, cqe);
+			free(cqe);
 			return n;
 		}
 		cq->cq_len += n;
@@ -166,10 +159,13 @@ ssize_t	n;
 	}
 
 	n = read(fd, cq_last_ent_free(cq), cq_left(cq));
-			if (n == -1 && errno == EINVAL)
-				abort();
+
+	if (n == -1 && errno == EINVAL)
+		abort();
+
 	if (n > 0)
 		cq->cq_len += n;
+
 	return n;
 }
 
@@ -205,48 +201,21 @@ size_t		 i = 0, flen;
 	return -1;
 }
 
-str_t
+char *
 cq_read_line(cq)
 	charq_t	*cq;
 {
-charq_ent_t	*e;
 ssize_t		 pos;
 char		*line;
-size_t		 done = 0, todo;
 
 	if ((pos = cq_find(cq, '\n')) == -1)
 		return NULL;
 	pos++;
-	line = xmalloc(pos);
+	line = xmalloc(pos + 1);
+	cq_extract_start(cq, line, pos);
+	line[pos] = 0;
 
-	e = cq_first_ent(cq);
-	todo = pos <= (CHARQ_BSZ - cq->cq_offs) ?
-		pos : (CHARQ_BSZ - cq->cq_offs);
-	bcopy(e->cqe_data + cq->cq_offs, line, todo);
-	done += todo;
-
-	if (done == pos) {
-	str_t	ret =  str_new_cl_take(line, pos - 1);
-		if (str_length(ret) && str_index(ret, str_length(ret) - 1) == '\r')
-			str_remove_end(ret, 1);
-		cq_remove_start(cq, pos);
-		return ret;
-	}
-
-	for (e = TAILQ_NEXT(e, cqe_list); e; e = TAILQ_NEXT(e, cqe_list)) {
-		todo = pos <= CHARQ_BSZ ?  pos : CHARQ_BSZ;
-		if (todo > (pos - done))
-			todo = pos - done;
-		bcopy(e->cqe_data, line + done, todo);
-		done += todo;
-		if (done == pos) {
-		str_t	ret =  str_new_cl_take(line, pos - 1);
-			if (str_length(ret) && str_index(ret, str_length(ret) - 1) == '\r')
-				str_remove_end(ret, 1);
-			cq_remove_start(cq, pos);
-			return ret;
-		}
-	}
-
-	abort();
+	if (*line && line[pos - 2] == '\r')
+		line[pos - 2] = 0;
+	return line;
 }

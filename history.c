@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/history.c,v 1.12 2012/01/09 03:07:03 river Exp $ */
 
 #include	<time.h>
 #include	<string.h>
@@ -72,7 +71,7 @@ history_run()
 
 int
 history_check(mid)
-	str_t	mid;
+	char const	*mid;
 {
 DBT		key, data;
 int		ret;
@@ -81,8 +80,8 @@ char		dbuf[sizeof(uint64_t)];
 	bzero(&key, sizeof(key));
 	bzero(&data, sizeof(data));
 
-	key.data = str_begin(mid);
-	key.size = str_length(mid);
+	key.data = (void *) mid;
+	key.size = strlen(mid);
 
 	data.data = dbuf;
 	data.ulen = sizeof(dbuf);
@@ -100,7 +99,7 @@ char		dbuf[sizeof(uint64_t)];
 
 int
 history_add(mid)
-	str_t	mid;
+	char const	*mid;
 {
 DBT		 key, data;
 int		 ret;
@@ -111,8 +110,8 @@ DB_TXN		*txn;
 	bzero(&key, sizeof(key));
 	bzero(&data, sizeof(data));
 
-	key.data = str_begin(mid);
-	key.size = str_length(mid);
+	key.data = (void *) mid;
+	key.size = strlen(mid);
 
 	data.data = &dbuf;
 	data.size = sizeof(dbuf);

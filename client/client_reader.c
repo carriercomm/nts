@@ -8,17 +8,17 @@
  * warranty.
  */
 
-#ifndef	NTS_AUTH_H
-#define	NTS_AUTH_H
+#include	<errno.h>
 
-extern int	auth_enabled;
-extern int	allow_unauthed;
-extern int	insecure_auth;
+#include	"client.h"
+#include	"nts.h"
+#include	"log.h"
 
-int	auth_init(void);
-int	auth_run(void);
-
-int	 auth_check(char const *username, char const *password);
-char	*auth_hash_password(char const *pw);
-
-#endif	/* !NTS_AUTH_H */
+void
+client_reader(client)
+	client_t	*client;
+{
+	if (reader_handoff(client->cl_fd) == -1)
+		client_log(LOG_ERR, client, "cannot complete reader handoff: %s",
+				strerror(errno));
+}

@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011, 2012 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/dns.c,v 1.10 2012/01/10 01:02:15 river Exp $ */
 
 #include	<sys/socket.h>
 #include	<netinet/in.h>
@@ -70,19 +69,21 @@ typedef enum {
 } request_state_t;
 
 typedef struct dns_request {
-	char				*dr_name;
-	int				 dr_types;
-	int				 dr_qtype;
-	address_list_t			*dr_result;
-	uint16_t			 dr_qid;
-	dns_done_fn			 dr_fn;
-	void				*dr_udata;
-	uint16_t			 dr_port;
-	int				 dr_retries;
-	ev_tstamp			 dr_sent;
-	request_state_t			 dr_state;
-	int				 dr_fd;
-	str_t				 dr_tcpdata;
+	char		*dr_name;
+	int		 dr_types;
+	int		 dr_qtype;
+	address_list_t	*dr_result;
+	uint16_t	 dr_qid;
+	dns_done_fn	 dr_fn;
+	void		*dr_udata;
+	uint16_t	 dr_port;
+	int		 dr_retries;
+	ev_tstamp	 dr_sent;
+	request_state_t	 dr_state;
+	int		 dr_fd;
+	char		*dr_tcpdata;
+	size_t		 dr_tcpdata_len;
+#define	TCP_BUFSZ	65535
 
 	TAILQ_ENTRY(dns_request)	 dr_list;
 } dns_request_t;
@@ -170,7 +171,7 @@ address_t	*addr;
 		}
 		free(req->dr_result);
 	}
-	str_free(req->dr_tcpdata);
+	free(req->dr_tcpdata);
 	free(req);
 }
 
@@ -757,7 +758,9 @@ static void
 tcp_start(req)
 	dns_request_t	*req;
 {
-	req->dr_tcpdata = str_new();
+	req->dr_tcpdata = xmalloc(TCP_BUFSZ);
+	req->dr_tcpdata_len = 0;
+
 	req->dr_state = DR_CONNECT;
 	net_connect(NET_DEFPRIO, 
 		    (struct sockaddr *)&current_server->ds_addr,
@@ -825,26 +828,32 @@ ssize_t		 n;
 		return;
 	}
 
-	str_append_cl(req->dr_tcpdata, buf, n);
-	if (str_length(req->dr_tcpdata) > 2) {
-	uint16_t	len = int16get(str_begin(req->dr_tcpdata));
+	if ((req->dr_tcpdata_len + n) > TCP_BUFSZ) {
+		nts_log(LOG_WARNING, "dns: answer too long");
+		req->dr_fn(req->dr_name, DNS_ERR_FORMERR, NULL, req->dr_udata);
+		request_free(req);
+		return;
+	}
 
-		if ((str_length(req->dr_tcpdata) - 2) >= len) {
+	bcopy(buf, req->dr_tcpdata + req->dr_tcpdata_len, n);
+
+	if (req->dr_tcpdata_len > 2) {
+	uint16_t	len = int16get(req->dr_tcpdata);
+
+		if ((req->dr_tcpdata_len - 2) >= len) {
 		int	ret, qid;
 			net_close(req->dr_fd);
 
-			if (ret = dns_parse_answer(str_begin(req->dr_tcpdata) + 2,
-						   str_length(req->dr_tcpdata) - 2,
+			if (ret = dns_parse_answer((unsigned char *)req->dr_tcpdata + 2,
+						   req->dr_tcpdata_len - 2,
 						   req->dr_result, &qid)) {
 				nts_log(LOG_WARNING, "dns: failed to parse answer");
-
 				req->dr_fn(req->dr_name, DNS_ERR_FORMERR, NULL, req->dr_udata);
-
 				request_free(req);
 				return;
 			}
 
-			str_free(req->dr_tcpdata);
+			free(req->dr_tcpdata);
 			req->dr_tcpdata = NULL;
 
 			if (req->dr_types == DNS_TYPE_ANY) {

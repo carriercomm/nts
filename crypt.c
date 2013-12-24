@@ -735,9 +735,6 @@ nts_init_des()
 		}
 		perm[i] = k;
 	}
-#ifdef DEBUG
-	prtab("pc1tab", perm, 8);
-#endif
 	nts_init_perm(PC1ROT, perm, 8, 8);
 
 	/*
@@ -759,9 +756,6 @@ nts_init_des()
 			if ((k%28) <= j) k -= 28;
 			perm[i] = pc2inv[k];
 		}
-#ifdef DEBUG
-		prtab("pc2tab", perm, 8);
-#endif
 		nts_init_perm(PC2ROT[j], perm, 8, 8);
 	}
 
@@ -783,9 +777,6 @@ nts_init_des()
 			perm[i*8+j] = k;
 		}
 	}
-#ifdef DEBUG
-	prtab("ietab", perm, 8);
-#endif
 	nts_init_perm(IE3264, perm, 4, 8);
 
 	/*
@@ -800,9 +791,6 @@ nts_init_des()
 		}
 		perm[k-1] = i+1;
 	}
-#ifdef DEBUG
-	prtab("cftab", perm, 8);
-#endif
 	nts_init_perm(CF6464, perm, 8, 8);
 
 	/*

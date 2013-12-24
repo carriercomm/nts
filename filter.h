@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/filter.h,v 1.9 2012/01/04 20:59:07 river Exp $ */
 
 #ifndef	NTS_FILTER_H
 #define	NTS_FILTER_H
@@ -25,7 +24,7 @@
 #define FILTER_USED		0x0020
 
 typedef struct filter {
-	str_t		 fi_name;
+	char		*fi_name;
 	wildmat_t	*fi_groups;
 	strlist_t	 fi_paths;
 	uint8_t		 fi_flags;
@@ -42,15 +41,17 @@ typedef struct filter {
 } filter_t;
 
 typedef struct filter_list_entry {
-	filter_t				*fle_filter;
+	filter_t	*fle_filter;
+
 	SIMPLEQ_ENTRY(filter_list_entry)	 fle_list;
 } filter_list_entry_t;
 typedef SIMPLEQ_HEAD(filter_list, filter_list_entry) filter_list_t;
 extern filter_list_t filter_list;
 
 typedef struct filter_group {
-	str_t				 fg_name;
-	filter_list_t			 fg_filters;
+	char		*fg_name;
+	filter_list_t	 fg_filters;
+
 	SIMPLEQ_ENTRY(filter_group)	 fg_list;
 } filter_group_t;
 typedef SIMPLEQ_HEAD(filter_group_list, filter_group) filter_group_list_t;
@@ -68,7 +69,7 @@ typedef enum {
 	FILTER_RESULT_DUNNO
 } filter_result_t;
 
-filter_result_t	 filter_article(article_t *, char const *, filter_list_t *, str_t *);
+filter_result_t	 filter_article(article_t *, char const *, filter_list_t *, char **);
 filter_result_t	 filter_article_one(article_t *, filter_t *);
 
 void		 filter_shutdown(void);

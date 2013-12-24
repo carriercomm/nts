@@ -53,10 +53,9 @@ void	 vpanic(char const *, va_list) attr_noreturn;
 
 void	 nts_shutdown(char const *reason);
 
-struct str;
-
 typedef struct path_ent {
-	struct str		*pe_path;
+	char	*pe_path;
+
 	SIMPLEQ_ENTRY(path_ent)	 pe_list;
 } path_ent_t;
 
@@ -249,5 +248,30 @@ void	unpack(unsigned char const *buf, char const *fmt, ...);
 #ifndef HAVE_PWRITEV
 ssize_t pwritev(int d, const struct iovec *iov, int iovcnt, off_t offset);
 #endif
+
+char	*next_any(char **, char const *);
+#define next_word(x)	next_any((x), " \t")
+#define next_bang(x)	next_any((x), "!")
+#define next_comma(x)	next_any((x), ",")
+char	*next_line(char **);
+
+int	 strmatch(char const *, char const *);
+
+typedef struct strlist_entry {
+	char	*sl_str;
+
+	SIMPLEQ_ENTRY(strlist_entry)	sl_list;
+} strlist_entry_t;
+
+typedef SIMPLEQ_HEAD(strlist, strlist_entry) strlist_t;
+
+#ifdef	NDEBUG
+#define	DEBUG(x)	0
+#else	/* NDEBUG */
+extern int nts_debug_flags;
+#define	DEBUG_CIO	0x1
+
+#define	DEBUG(x)	(nts_debug_flags & (DEBUG_##x))
+#endif	/* NDEBUG */
 
 #endif	/* !NTS_NTS_H */

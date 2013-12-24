@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /*
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/nts.c,v 1.59 2012/01/10 02:14:08 river Exp $ */
 
 #include	<sys/types.h>
 #include	<sys/socket.h>
@@ -22,6 +21,7 @@
 #include	<pwd.h>
 #include	<grp.h>
 #include	<fcntl.h>
+#include	<ctype.h>
 
 #include	<ev.h>
 
@@ -71,6 +71,10 @@ static char	*chroot_dir;
 static time_t	 start_time;
 uint64_t	 stats_interval = 30;
 uint64_t	 worker_threads = 0;
+
+#ifndef	NDEBUG
+int		 nts_debug_flags;
+#endif
 
 static int	 start_reader_helper(void);
 static char	*get_uptime(void);
@@ -166,6 +170,7 @@ char		*control_command = NULL;
 struct group	*grp = NULL;
 struct passwd	*pwd = NULL;
 int		 devnull;
+char		*s;
 
 	/* Initialise the rng before we chroot */
 	arc4random();
@@ -173,11 +178,10 @@ int		 devnull;
 	start_time = time(NULL);
 	ba_ctl = balloc_new(sizeof(ctl_client_t), 8, "ctl_client");
 
-	str_init();
 	article_init();
 	cq_init();
 
-	while ((c = getopt(argc, argv, "Vc:p:nx:y")) != -1) {
+	while ((c = getopt(argc, argv, "Vc:p:nx:yD:")) != -1) {
 		switch (c) {
 			case 'V':
 				printf("RT/NTS %s\n", PACKAGE_VERSION);
@@ -213,6 +217,24 @@ int		 devnull;
 			case 'y':
 				++yflag;
 				break;
+
+			case 'D':
+#ifndef	NDEBUG
+				while (s = next_any(&optarg, ",")) {
+					if (strcmp(s, "cio") == 0)
+						nts_debug_flags |= DEBUG_CIO;
+					else {
+						fprintf(stderr, "%s: unknown debug flag: %s\n",
+							argv[0], s);
+						return 1;
+					}
+				}
+				break;
+#else	/* NDEBUG */
+				fprintf(stderr, "%s: debugging code disabled at build time\n",
+					argv[0]);
+				return 1;
+#endif	/* NDEBUG */
 
 			default:
 				usage(argv[0]);
@@ -392,7 +414,7 @@ conf_val_t	*val;
 
 	for (val = opt->co_value; val; val = val->cv_next) {
 	path_ent_t	*pe = xcalloc(1, sizeof(*pe));
-		pe->pe_path = str_new_c(val->cv_string);
+		pe->pe_path = xstrdup(val->cv_string);
 		SIMPLEQ_INSERT_TAIL(&common_paths, pe, pe_list);
 	}
 }
@@ -486,7 +508,7 @@ ctl_read(fd, what, udata)
 	void	*udata;
 {
 ctl_client_t	*ctl = udata;
-str_t		 cmd;
+char		*cmd;
 int		 n;
 
 	switch (n = net_readline(ctl->ctl_fd, &cmd)) {
@@ -497,32 +519,32 @@ int		 n;
 		return;
 	}
 
-	if (str_equal_c(cmd, "version")) {
+	if (strcmp(cmd, "version") == 0) {
 		ctl_printf(ctl, "OK\n%s\n", PACKAGE_VERSION);
-	} else if (str_equal_c(cmd, "peers")) {
+	} else if (strcmp(cmd, "peers") == 0) {
 		ctl_printf(ctl, "OK\n");
 		ctl_do_peer_stats(ctl);
-	} else if (str_equal_c(cmd, "filters")) {
+	} else if (strcmp(cmd, "filters") == 0) {
 		ctl_printf(ctl, "OK\n");
 		ctl_do_filter_stats(ctl);
-	} else if (str_equal_c(cmd, "clients")) {
+	} else if (strcmp(cmd, "clients") == 0) {
 		ctl_printf(ctl, "OK\n");
 		ctl_do_client_stats(ctl);
-	} else if (str_equal_c(cmd, "feeder")) {
+	} else if (strcmp(cmd, "feeder") == 0) {
 		ctl_printf(ctl, "OK\n");
 		ctl_do_feeder_stats(ctl);
-	} else if (str_equal_c(cmd, "uptime")) {
+	} else if (strcmp(cmd, "uptime") == 0) {
 		ctl_printf(ctl, "OK\n%s\n", get_uptime());
-	} else if (str_equal_c(cmd, "shutdown")) {
+	} else if (strcmp(cmd, "shutdown") == 0) {
 		nts_shutdown("control socket");
-	} else if (str_equal_c(cmd, "balloc")) {
+	} else if (strcmp(cmd, "balloc") == 0) {
 #if BALLOC_STATS
 		ctl_printf(ctl, "OK\n");
 		ctl_do_balloc_stats(ctl);
 #else
 		ctl_printf(ctl, "ERR Allocator statistics not available.\n");
 #endif
-	} else if (str_equal_c(cmd, "stats")) {
+	} else if (strcmp(cmd, "stats") == 0) {
 	time_t	now = time(NULL);
 		ctl_printf(ctl, "OK\n");
 		ctl_printf(ctl, "RT/NTS %s statistics as of %s",
@@ -544,7 +566,7 @@ int		 n;
 	} else
 		ctl_printf(ctl, "ERR Unknown control command\n");
 
-	str_free(cmd);
+	free(cmd);
 	ctl_close(ctl);
 }
 
@@ -642,9 +664,8 @@ char			 line[1024];
 		return 0;
 	} else if (strcmp(cmd, "hashpw") == 0) {
 	char	*pw = getpass("Password: ");
-	str_t	 spw = str_new_c(pw);
-	str_t	 hash = auth_hash_password(spw);
-		printf("%.*s\n", str_printf(hash));
+	char	*hash = auth_hash_password(pw);
+		printf("%s\n", hash);
 		return 0;
 	}
 
@@ -804,8 +825,8 @@ filter_list_entry_t	*fle;
 
 	SIMPLEQ_FOREACH(fle, &filter_list, fle_list) {
 	filter_t	*fi = fle->fle_filter;
-		ctl_printf(ctl, "%-22.*s   %12"PRIu64" %12"PRIu64" %12"PRIu64"\n",
-			str_printf(fi->fi_name), fi->fi_num_permit,
+		ctl_printf(ctl, "%-22s   %12"PRIu64" %12"PRIu64" %12"PRIu64"\n",
+			fi->fi_name, fi->fi_num_permit,
 			fi->fi_num_deny, fi->fi_num_dunno);
 	}
 }
@@ -1075,128 +1096,113 @@ struct rusage	rus;
 void
 pack(unsigned char *buf, char const *fmt, ...)
 {
-va_list          ap;
-char const      *s;
-size_t           len;
-str_t            str;
-uint32_t         u32;
-uint64_t         u64;
-uint8_t          u8;
+va_list		 ap;
+char const	*s;
+size_t		 len;
+uint32_t	 u32;
+uint64_t	 u64;
+uint8_t		 u8;
 
-        va_start(ap, fmt);
+	va_start(ap, fmt);
 
-        while (*fmt) {
-                switch (*fmt++) {
-                case 'b':
-                        u8 = va_arg(ap, int);
-                        int8put(buf, u8);
-                        buf += 1;
-                        break;
+	while (*fmt) {
+		switch (*fmt++) {
+		case 'b':
+			u8 = va_arg(ap, int);
+			int8put(buf, u8);
+			buf += 1;
+			break;
 
-                case 'u':
-                case 'i':
-                        u32 = va_arg(ap, uint32_t);
-                        int32put(buf, u32);
-                        buf += 4;
-                        break;
+		case 'u':
+		case 'i':
+			u32 = va_arg(ap, uint32_t);
+			int32put(buf, u32);
+			buf += 4;
+			break;
 
-                case 'U':
-                case 'I':
-                        u64 = va_arg(ap, uint64_t);
-                        int64put(buf, u64);
-                        buf += 8;
-                        break;
+		case 'U':
+		case 'I':
+			u64 = va_arg(ap, uint64_t);
+			int64put(buf, u64);
+			buf += 8;
+			break;
 
-                case 'f':
-                        u64 = (uint64_t) va_arg(ap, double) * 1000;
-                        int64put(buf, u64);
-                        buf += 8;
-                        break;
+		case 'f':
+			u64 = (uint64_t) va_arg(ap, double) * 1000;
+			int64put(buf, u64);
+			buf += 8;
+			break;
 
-                case 's':
-                        s = va_arg(ap, char const *);
-                        len = strlen(s);
-                        bcopy(s, buf, len);
-                        buf[len] = '\0';
-                        buf += len + 1;
-                        break;
+		case 's':
+			s = va_arg(ap, char const *);
+			len = strlen(s);
+			bcopy(s, buf, len);
+			buf[len] = '\0';
+			buf += len + 1;
+			break;
 
-                case 'S':
-                        str = va_arg(ap, str_t);
-                        int32put(buf, str_length(str));
-                        bcopy(str_begin(str), buf + 4, str_length(str));
-                        buf += 4 + str_length(str);
-                        break;
+		default:
+			abort();
+		}
+	}
 
-                default:
-                        abort();
-                }
-        }
-        va_end(ap);
+	va_end(ap);
 }
 
 void
 unpack(unsigned char const *buf, char const *fmt, ...)
 {
-va_list          ap;
-char            **s;
-size_t           len;
-str_t           *str;
-uint32_t        *u32;
-uint64_t        *u64;
-double          *d;
-uint8_t         *u8;
+va_list		  ap;
+char		**s;
+size_t		  len;
+uint32_t	*u32;
+uint64_t	*u64;
+double		*d;
+uint8_t		*u8;
 
-        va_start(ap, fmt);
+	va_start(ap, fmt);
 
-        while (*fmt) {
-                switch (*fmt++) {
-                case 'b':
-                        u8 = va_arg(ap, uint8_t *);
-                        *u8 = int8get(buf);
-                        buf++;
-                        break;
+	while (*fmt) {
+		switch (*fmt++) {
+		case 'b':
+			u8 = va_arg(ap, uint8_t *);
+			*u8 = int8get(buf);
+			buf++;
+			break;
 
-                case 'u':
-                case 'i':
-                        u32 = va_arg(ap, uint32_t *);
-                        *u32 = int32get(buf);
-                        buf += 4;
-                        break;
+		case 'u':
+		case 'i':
+			u32 = va_arg(ap, uint32_t *);
+			*u32 = int32get(buf);
+			buf += 4;
+			break;
 
-                case 'U':
-                case 'I':
-                        u64 = va_arg(ap, uint64_t *);
-                        *u64 = int64get(buf);
-                        buf += 8;
-                        break;
+		case 'U':
+		case 'I':
+			u64 = va_arg(ap, uint64_t *);
+			*u64 = int64get(buf);
+			buf += 8;
+			break;
 
-                case 'f':
-                        d = va_arg(ap, double *);
-                        *d = (double) int64get(buf) / 1000;
-                        buf += 8;
-                        break;
+		case 'f':
+			d = va_arg(ap, double *);
+			*d = (double) int64get(buf) / 1000;
+			buf += 8;
+			break;
 
-                case 's':
-                        s = va_arg(ap, char **);
-                        len = strlen((char *) buf);
-                        *s = (char *) xmalloc(len);
-                        strcpy(*s, (char *) buf);
-                        buf += len + 1;
-                        break;
+		case 's':
+			s = va_arg(ap, char **);
+			len = strlen((char *) buf);
+			*s = (char *) xmalloc(len);
+			strcpy(*s, (char *) buf);
+			buf += len + 1;
+			break;
 
-                case 'S':
-                        str = va_arg(ap, str_t *);
-                        len = int32get(buf);
-			*str = str_new_cl((char const *) buf + 4, len);
-                        buf += 4 + len;
-                        break;
-
-                default:
-                        abort();
-                }
-        }
-        va_end(ap);
+		default:
+			abort();
+		}
+	}
+	va_end(ap);
 }
 
 #ifndef HAVE_PWRITEV
@@ -1223,3 +1229,190 @@ ssize_t			 nwrt = 0;
 	return nwrt;
 }
 #endif
+
+char *
+next_any(str, chrs)
+	char		**str;
+	char const	*chrs;
+{
+char	*start, *end;
+
+	while (**str && index(chrs, **str))
+		(*str)++;
+
+	if (!**str)
+		return NULL;
+
+	start = *str;
+	end = strpbrk(start, chrs);
+
+	if (!end) {
+		*str += strlen(*str);
+		return start;
+	}
+
+	*end = 0;
+	*str += (end - start) + 1;
+	return start;
+}
+
+char *
+next_line(str)
+	char	**str;
+{
+char	*ret;
+size_t	 len;
+	if ((ret = next_any(str, "\n")) == NULL)
+		return NULL;
+
+	len = strlen(ret);
+	if (ret[len - 1] == '\r')
+		ret[len - 1] = 0;
+	return ret;
+}
+
+static int strmatch_impl(char const *, char const *, char const *, char const *);
+
+int
+strmatch(str, pattern)
+	char const	*str, *pattern;
+{
+	return strmatch_impl(str, str + strlen(str),
+			pattern, pattern + strlen(pattern));
+}
+
+/*      $NetBSD: fnmatch.c,v 1.21 2005/12/24 21:11:16 perry Exp $       */
+
+/*
+ * Copyright (c) 1989, 1993, 1994
+ *      The Regents of the University of California.  All rights reserved.
+ *
+ * This code is derived from software contributed to Berkeley by
+ * Guido van Rossum.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
+static char const	*strrangematch(char const *, char const *, int);
+
+static int
+strmatch_impl(str, strend, pattern, patend)
+	char const	*str, *strend, *pattern, *patend;
+{
+char	c;
+	for (;;) {
+		if (pattern == patend) {
+			if (str == strend)
+				return 1;
+			else
+				return 0;
+		}
+
+		switch (c = tolower(*pattern++)) {
+		case '?':
+			if (str == strend)
+				return 0;
+			str++;
+			break;
+
+		case '*':
+			if (pattern == patend)
+				return 1;
+			c = tolower(*pattern);
+
+			while (c == '*')
+				c = tolower(*++pattern);
+
+			if (pattern == patend)
+				return 1;
+
+			while (str < strend) {
+				if (strmatch_impl(str, strend, pattern, patend))
+					return 1;
+				str++;
+			}
+
+		case '[':
+			if (str == strend)
+				return 0;
+			if ((pattern = strrangematch(pattern, patend, tolower(*str))) == NULL)
+				return 0;
+			++str;
+			break;
+
+		case '\\':
+			c = tolower(*pattern++);
+			if (pattern == patend) {
+				c = '\\';
+				--pattern;
+			}
+
+		default:
+			if (c != tolower(*str++))
+				return 0;
+			break;
+		}
+	}
+}
+
+static char const *
+strrangematch(pattern, patend, test)
+	char const	*pattern, *patend;
+{
+int	negate, ok;
+char	c, c2;
+
+	/*
+	 * A bracket expression starting with an unquoted circumflex
+	 * character produces unspecified results (IEEE 1003.2-1992,
+	 * 3.13.2).  This implementation treats it like '!', for
+	 * consistency with the regular expression syntax.
+	 * J.T. Conklin (conklin@ngai.kaleida.com)
+	 */
+	if ((negate = (*pattern == '!' || *pattern == '^')) != 0)
+		++pattern;
+
+	for (ok = 0; (c = tolower(*pattern++)) != ']';) {
+		if (c == '\\')
+			c = tolower(*pattern++);
+		if (pattern == patend)
+			return NULL;
+		if (*pattern == '-') {
+			c2 = tolower(*(pattern + 1));
+			if (pattern != patend && c2 != ']')
+				pattern += 2;
+			if (c2 == '\\')
+				c2 = tolower(*pattern++);
+			if (pattern == patend)
+				return NULL;
+			if (c <= test && test <= c2)
+				ok = 1;
+		} else if (c == test)
+			ok = 1;
+	}
+
+	return ok == negate ? NULL : pattern;
+}
+

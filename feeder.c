@@ -57,14 +57,14 @@ static void	 fconn_close(fconn_t *);
 static void	 fconn_adp_check(fconn_t *, int accepted);
 static void      fconn_dns_done(char const *name, int, address_list_t *, void *);
 
-static int	 fc_wait_greeting(fconn_t *, str_t);
-static int	 fc_sent_capabilities(fconn_t *, str_t);
-static int	 fc_read_capabilities(fconn_t *, str_t);
-static int	 fc_sent_mode_stream(fconn_t *, str_t);
-static int	 fc_running(fconn_t *, str_t);
+static int	 fc_wait_greeting(fconn_t *, char *);
+static int	 fc_sent_capabilities(fconn_t *, char *);
+static int	 fc_read_capabilities(fconn_t *, char *);
+static int	 fc_sent_mode_stream(fconn_t *, char *);
+static int	 fc_running(fconn_t *, char *);
 /* }}} */
 
-static int (*fconn_handlers[]) (fconn_t *, str_t) = {
+static int (*fconn_handlers[]) (fconn_t *, char *) = {
 	NULL,	/* DNS */
 	NULL,	/* CONNECT */
 	fc_wait_greeting,
@@ -216,7 +216,7 @@ fconn_read(fd, what, udata)
 {
 fconn_t		*fc = udata;
 feeder_t	*fe = fc->fc_feeder;
-str_t		 line;
+char		*line;
 int		 n;
 
 	/*
@@ -228,8 +228,9 @@ int		 n;
 		 * Ignore empty lines -- altough perhaps we should close the
 		 * connection here, as there shouldn't be any.
 		 */
-		if (str_length(line) == 0) {
-			str_free(line);
+		if (strlen(line) == 0) {
+			free(line);
+			line = NULL;
 			continue;
 		}
 
@@ -247,9 +248,13 @@ int		 n;
 
 		if (fconn_handlers[fc->fc_state](fc, line) == 1) {
 			time(&fe->fe_last_fail);
-			str_free(line);
+			free(line);
+			line = NULL;
 			return;
 		}
+
+		free(line);
+		line = NULL;
 
 		/*
 		 * dead is set when a write error occurs; there's no point
@@ -286,11 +291,11 @@ int		 n;
 static int
 fc_wait_greeting(fc, line)
 	fconn_t	*fc;
-	str_t	 line;
+	char	*line;
 {
-	if (str_index(line, 0) != '2') {
-		fconn_log(LOG_ERR, fc, "connection rejected: %.*s",
-			str_printf(line));
+	if (line[0] != '2') {
+		fconn_log(LOG_ERR, fc, "connection rejected: %s",
+			line);
 		return 1;
 	} else {
 		fconn_puts(fc, "MODE STREAM\r\n");
@@ -309,16 +314,16 @@ fc_wait_greeting(fc, line)
 static int
 fc_sent_mode_stream(fc, line)
 	fconn_t	*fc;
-	str_t	 line;
+	char	*line;
 {
-str_t	resp;
+char	*resp;
 
-	if (!(resp = str_next_word(line))) {
+	if ((resp = next_word(&line)) == NULL) {
 		fconn_log(LOG_INFO, fc, "invalid response to MODE STREAM");
 		return 1;
 	}
 
-	if (!str_equal_c(resp, "203")) {
+	if (strcmp(resp, "203") != 0) {
 		fconn_puts(fc, "CAPABILITIES\r\n");
 		fc->fc_state = FS_SENT_CAPABILITIES;
 		return 0;
@@ -344,16 +349,16 @@ str_t	resp;
 static int
 fc_sent_capabilities(fc, line)
 	fconn_t	*fc;
-	str_t	 line;
+	char	*line;
 {
-str_t	resp;
+char	*resp;
 	
-	if (!(resp = str_next_word(line))) {
+	if ((resp = next_word(&line)) == NULL) {
 		fconn_log(LOG_INFO, fc, "invalid response to CAPABILITIES");
 		return 1;
 	}
 
-	if (!str_equal_c(resp, "101")) {
+	if (strcmp(resp, "101") != 0) {
 		fc->fc_state = FS_RUNNING;
 #if 0
 		if (cf->log_connections)
@@ -372,16 +377,16 @@ str_t	resp;
 static int
 fc_read_capabilities(fc, line)
 	fconn_t	*fc;
-	str_t	 line;
+	char	*line;
 {
-str_t	cap;
+char	*cap;
 
-	if (!(cap = str_next_word(line)))
+	if ((cap = next_word(&line)) == NULL)
 		/* Empty line, just ignore it. */
 		return 0;
 
 		
-	if (str_equal_c(cap, ".")) {
+	if (strcmp(cap, ".") == 0) {
 #if 0
 		if (cf->log_connections)
 #endif
@@ -389,7 +394,7 @@ str_t	cap;
 				fc->fc_mode == FM_STREAM ? "streaming" : "IHAVE");
 		fc->fc_state = FS_RUNNING;
 		feeder_notify(fc->fc_feeder);
-	} else if (str_equal_c(cap, "STREAMING"))
+	} else if (strcmp(cap, "STREAMING") == 0)
 		fc->fc_mode = FM_STREAM;
 
 	return 0;
@@ -402,7 +407,7 @@ str_t	cap;
 static int
 fc_running(fc, line)
 	fconn_t	*fc;
-	str_t	 line;
+	char	*line;
 {
 	/*
 	 * 238 <msg-id>	-- CHECK, send the article
@@ -411,7 +416,7 @@ fc_running(fc, line)
 	 * 239 <msg-id>	-- TAKETHIS, accepted
 	 * 439 <msg-id>	-- TAKETHIS, rejected
 	 */
-str_t	 resps = NULL,  msgid = NULL;
+char	*resps = NULL, *resps_ = NULL, *msgid = NULL;
 int	 resp;
 qent_t	*qe;
 
@@ -420,13 +425,14 @@ qent_t	*qe;
 	/*
 	 * Extract a valid response code and message-id from the server.
 	 */
-	if (!(resps = str_next_word(line))) {
-		fconn_log(LOG_INFO, fc, "invalid response from command [%.*s]",
-			  str_printf(line));
+	if ((resps_ = next_word(&line)) == NULL) {
+		fconn_log(LOG_INFO, fc, "invalid response from command [%s]",
+			  line);
 		return 1;
 	}
+	resps = resps_;
 
-	if (str_length(resps) != 3) {
+	if (strlen(resps) != 3) {
 		/*
 		 * INN <= 2.5.2 has a bug where it sometimes writes a single
 		 * junk character after a reply's \r\n.  This shows up as a
@@ -437,24 +443,21 @@ qent_t	*qe;
 #if 0
 		fc->feeder->server->inn_workaround &&
 #endif
-		    str_length(resps) == 4 &&
-		    isdigit(str_index(resps, 1)) &&
-		    isdigit(str_index(resps, 2)) &&
-		    isdigit(str_index(resps, 3))) {
-			str_remove_start(resps, 1);
+		    strlen(resps) == 4 &&
+		    isdigit(resps[1]) &&
+		    isdigit(resps[2]) &&
+		    isdigit(resps[3])) {
+			resps++;
 		} else {
-			fconn_log(LOG_INFO, fc, "invalid response from command [%.*s%.*s]",
-				  str_printf(resps), str_printf(line));
-			str_free(resps);
+			fconn_log(LOG_INFO, fc, "invalid response from command [%s%s]",
+				  resps, line);
 			return 1;
 		}
 	}
 
-	resp = (str_index(resps, 0) - '0') * 100
-		+ (str_index(resps, 1) - '0') * 10
-		+ (str_index(resps, 2) - '0');
-	str_free(resps);
-	resps = NULL;
+	resp = (resps[0] - '0') * 100
+	     + (resps[1] - '0') * 10
+	     + (resps[2] - '0');
 
 	/*
 	 * Make sure the response code is one that we recognise.  Codes that
@@ -473,8 +476,8 @@ qent_t	*qe;
 		 * Unrecognised response code, close the connection.
 		 */
 		fconn_log(LOG_NOTICE, fc, "unrecognised response "
-				"to command: %d %.*s", resp,
-				str_printf(line));
+				"to command: %d %s", resp,
+				line);
 		return 1;
 	}
 
@@ -483,7 +486,7 @@ qent_t	*qe;
 	 * commands we previously sent; if it doesn't, something is out of
 	 * sync, so close the connection and start again.
 	 */
-	if (!(msgid = str_next_word(line))) {
+	if (!(msgid = next_word(&line))) {
 		fconn_log(LOG_INFO, fc, "received %d response with no "
 				"message-id", resp);
 		return 1;
@@ -500,22 +503,20 @@ qent_t	*qe;
 	 */
 	if ((qe = TAILQ_FIRST(&fc->fc_cq)) == NULL) {
 		fconn_log(LOG_INFO, fc, "received response without sending "
-			  "any command: %d %.*s%.*s", resp,
-			  str_printf(msgid), str_printf(line));
-		str_free(msgid);
+			  "any command: %d %s%s", resp,
+			  msgid, line);
 		return 1;
 	}
 
-	hash_remove(fc->fc_feeder->fe_pending, str_begin(msgid), str_length(msgid));
+	hash_remove(fc->fc_feeder->fe_pending, msgid, strlen(msgid));
 
 	TAILQ_REMOVE(&fc->fc_cq, qe, qe_list);
-	if (!str_equal(qe->qe_msgid, msgid)) {
+	if (strcmp(qe->qe_msgid, msgid) == 0) {
 		fconn_log(LOG_INFO, fc, "expected response for %s message-id "
-			  "%.*s, but got %d %.*s%.*s",
+			  "%s, but got %d %s%s",
 			  qe->qe_cmd == QE_CHECK ? "CHECK" : "TAKETHIS",
-			  str_printf(qe->qe_msgid), resp,
-			  str_printf(msgid), str_printf(line));
-		str_free(msgid);
+			  qe->qe_msgid, resp,
+			  msgid, line);
 		qefree(qe);
 		return 1;
 	}
@@ -731,8 +732,8 @@ int	len;
 	 * processing deferred articles.
 	 */
 	if (hash_find(fc->fc_feeder->fe_pending,
-		      str_begin(qe->qe_msgid),
-		      str_length(qe->qe_msgid))) {
+		      qe->qe_msgid,
+		      strlen(qe->qe_msgid))) {
 		qefree(qe);
 		return;
 	}
@@ -746,15 +747,15 @@ int	len;
 	} 
 
 	hash_insert(fc->fc_feeder->fe_pending,
-		    str_begin(qe->qe_msgid),
-		    str_length(qe->qe_msgid),
+		    qe->qe_msgid,
+		    strlen(qe->qe_msgid),
 		    fc);
 
 	time(&fc->fc_last_used);
 	qe->qe_cmd = QE_CHECK;
 	TAILQ_INSERT_TAIL(&fc->fc_cq, qe, qe_list);
 
-	len = snprintf(buf, sizeof(buf), "CHECK %.*s\r\n", str_printf(qe->qe_msgid));
+	len = snprintf(buf, sizeof(buf), "CHECK %s\r\n", qe->qe_msgid);
 	net_write(fc->fc_fd, buf, len);
 	++fc->fc_ncq;
 }
@@ -766,8 +767,8 @@ int	len;
 static void
 fconn_takethis(fconn_t *fc, qent_t *qe)
 {
-spool_header_t	 hdr;
-str_t		 text;
+spool_header_t	  hdr;
+char		 *text;
 
 	/*
 	 * If this article has already been offered, don't offer it
@@ -775,8 +776,8 @@ str_t		 text;
 	 * processing deferred articles.
 	 */
 	if (hash_find(fc->fc_feeder->fe_pending,
-		      str_begin(qe->qe_msgid),
-		      str_length(qe->qe_msgid))) {
+		      qe->qe_msgid,
+		      strlen(qe->qe_msgid))) {
 		qefree(qe);
 		return;
 	}
@@ -791,8 +792,8 @@ str_t		 text;
 	}
 
 	hash_insert(fc->fc_feeder->fe_pending,
-		    str_begin(qe->qe_msgid),
-		    str_length(qe->qe_msgid),
+		    qe->qe_msgid,
+		    strlen(qe->qe_msgid),
 		    fc);
 
 	qe->qe_cmd = QE_TAKETHIS;
@@ -800,10 +801,10 @@ str_t		 text;
 	++fc->fc_ncq;
 	TAILQ_INSERT_TAIL(&fc->fc_cq, qe, qe_list);
 
-	fconn_printf(fc, "TAKETHIS %.*s\r\n%.*s.\r\n",
-			str_printf(qe->qe_msgid),
-			str_printf(text));
-	str_free(text);
+	fconn_printf(fc, "TAKETHIS %s\r\n%s.\r\n",
+			qe->qe_msgid,
+			text);
+	free(text);
 }
 
 static void
@@ -875,7 +876,9 @@ int i = 0;
 		unpack((unsigned char const *) key.data, "uU",
 			&qe->qe_pos.sp_id,
 			&qe->qe_pos.sp_offset);
-		qe->qe_msgid = str_new_cl(data.data, data.size);
+		qe->qe_msgid = xmalloc(data.size + 1);
+		bcopy(data.data, qe->qe_msgid, data.size);
+		qe->qe_msgid[data.size] = 0;
 		qe->qe_type = backlog ? QT_DEFERRED : QT_Q;
 
 		/*

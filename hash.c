@@ -169,7 +169,7 @@ hash_item_t	*ie;
 int
 hash_insert(table, key, keylen, value)
 	hash_table_t	*table;
-	void		*key;
+	void const	*key;
 	size_t		 keylen;
 	void		*value;
 {

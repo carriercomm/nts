@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/server.h,v 1.24 2012/01/10 00:22:32 river Exp $ */
 
 #ifndef	NTS_SERVER_H
 #define	NTS_SERVER_H
@@ -51,14 +50,14 @@ typedef enum {
 } q_type_t;
 
 typedef struct qent {
-	q_type_t                qe_type;
+	q_type_t		 qe_type;
 	enum {
 		QE_CHECK,
 		QE_TAKETHIS
-	}                       qe_cmd;
-	str_t                   qe_msgid;
-	spool_pos_t             qe_pos;
-	TAILQ_ENTRY(qent)       qe_list;
+	}			 qe_cmd;
+	char			*qe_msgid;
+	spool_pos_t		 qe_pos;
+	TAILQ_ENTRY(qent)	 qe_list;
 } qent_t;
 
 typedef TAILQ_HEAD(sendq, qent) sendq_t;
@@ -147,11 +146,11 @@ server_t	*server_find_by_address(struct sockaddr_storage *);
 void		 server_add_backlog(server_t *, struct article *, DB_TXN *);
 void		 server_set_spool_pos(server_t *, spool_pos_t *);
 int		 server_wants_article(server_t *, article_t *art);
-int		 server_accept_offer(server_t *, str_t);
+int		 server_accept_offer(server_t *, char const *);
 int		 server_has_backlog(server_t *);
 void		 server_notify_article(article_t *);
 void		 server_defer(server_t *, qent_t *);
 void		 server_remove_q(server_t *, qent_t *);
-void             server_addq(server_t *, struct article *, DB_TXN *);
+void		 server_addq(server_t *, struct article *, DB_TXN *);
 
 #endif	/* !NTS_SERVER_H */
