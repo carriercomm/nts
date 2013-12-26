@@ -306,11 +306,14 @@ client_handle_line(cl, line)
 			client_takethis_done(cl);
 		} else {
 			if (cl->cl_artsize <= max_article_size) {
-				if ((strlen(line) + 3 + cl->cl_artsize) >=
-				    cl->cl_artalloc) {
-					cl->cl_article = xrealloc(cl->cl_article,
-								cl->cl_artalloc * 2);
+			size_t	newsz = (strlen(line) + 3 + cl->cl_artsize);
+				if (newsz >= cl->cl_artalloc) {
 					cl->cl_artalloc *= 2;
+					if (newsz >= cl->cl_artalloc)
+						cl->cl_artalloc = newsz + 1;
+					    
+					cl->cl_article = xrealloc(cl->cl_article,
+								  cl->cl_artalloc);
 				}
 
 				strlcat(cl->cl_article, line, cl->cl_artalloc);
@@ -446,6 +449,9 @@ on_client_close_done(handle)
 	uv_handle_t	*handle;
 {
 client_t	*cl = handle->data;
+
+	if (cl->cl_flags & CL_PENDING)
+		return;
 
 	client_destroy(cl);
 }
