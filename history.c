@@ -210,6 +210,7 @@ db_recno_t	 recno = 0;
 	key.ulen = sizeof(recno);
 	key.flags = DB_DBT_USERMEM;
 
+	bzero(&mkey, sizeof(mkey));
 	mkey.data = (void *) mid;
 	mkey.size = strlen(mid);
 
