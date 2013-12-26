@@ -222,7 +222,7 @@ db_recno_t	 recno = 0;
 	for (;;) {
 		txn = db_new_txn(DB_TXN_WRITE_NOSYNC);
 
-		ret = history_by_msgid->get(history_by_msgid, txn, &mkey, &data, 0);
+		ret = history_by_msgid->get(history_by_msgid, txn, &mkey, &data, DB_RMW);
 		if (ret == 0) {
 			txn->abort(txn);
 			return 0;
