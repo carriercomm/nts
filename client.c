@@ -176,7 +176,7 @@ int			addrlen = sizeof(addr);
 		if (server->se_nconns == server->se_maxconns_in) {
 			nts_log(LOG_NOTICE, "%s[%s]:%s: connection rejected: too many connections",
 				server->se_name, host, serv);
-			client_printf(client, "400 Too many connection (%s).\r\n", contact_address);
+			client_printf(client, "400 Too many connections (%s).\r\n", contact_address);
 			client_close(client, 1);
 			return;
 		}
