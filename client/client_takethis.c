@@ -16,19 +16,6 @@
 #include	"emp.h"
 #include	"incoming.h"
 
-typedef struct reply {
-	client_t	*re_client;
-	int		 re_reason;
-	struct reply	*re_next;
-} reply_t;
-
-static pthread_mutex_t	 reply_mtx = PTHREAD_MUTEX_INITIALIZER;
-static reply_t		*reply_list;
-
-uv_async_t		 reply_ev;
-
-static void	client_handle_reply(client_t *, int);
-
 void
 c_takethis(client, cmd, line)
 	client_t	*client;
@@ -100,41 +87,6 @@ void	client_incoming_reply(client_t *, int);
 
 void
 client_incoming_reply(cl, reason)
-	client_t	*cl;
-{
-reply_t	*reply = xcalloc(1, sizeof(*reply));
-	reply->re_client = cl;
-	reply->re_reason = reason;
-
-	pthread_mutex_lock(&reply_mtx);
-	reply->re_next = reply_list;
-	reply_list = reply;
-	uv_async_send(&reply_ev);
-	pthread_mutex_unlock(&reply_mtx);
-
-}
-
-void
-client_do_replies(handle, status)
-	uv_async_t	*handle;
-{
-reply_t	*list, *e, *next;
-
-	pthread_mutex_lock(&reply_mtx);
-	list = reply_list;
-	reply_list = NULL;
-	pthread_mutex_unlock(&reply_mtx);
-
-	for (e = list, next = NULL; e; e = next) {
-		next = e->re_next;
-		client_handle_reply(e->re_client, e->re_reason);
-		free(e);
-		e = NULL;
-	}
-}
-
-static void
-client_handle_reply(cl, reason)
 	client_t	*cl;
 {
 int	 rejected = (cl->cl_state == CS_TAKETHIS) ? 439 : 437;

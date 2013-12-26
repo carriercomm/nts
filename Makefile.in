@@ -60,7 +60,7 @@ dist: ${SRCS} ${HDRS} ${EXTRA_DIST}
 	    		${top_srcdir}/configure.ac`;				\
 	rm -rf nts-$$version;							\
 	mkdir nts-$$version;							\
-	cp $< nts-$$version/;							\
+	cp $< nts-$$version;							\
 	tar cf nts-$$version.tar nts-$$version;					\
 	gzip -f nts-$$version.tar;						\
 	ls -l nts-$$version.tar.gz

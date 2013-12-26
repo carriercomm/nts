@@ -86,8 +86,6 @@ client_init()
 	pending_init();
 	config_add_stanza(&listen_stanza);
 
-	uv_async_init(loop, &reply_ev, client_do_replies);
-
 #ifdef HAVE_OPENSSL
 	SSL_load_error_strings();
 	SSL_library_init();

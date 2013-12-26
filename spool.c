@@ -24,6 +24,12 @@
  * never fully received from a peer, so the peer will re-send them later.
  */
 
+/*
+ * The spool code is NOT internally thread-safe.  Locking is done at the
+ * interface between spool and the rest of NTS, i.e. in spool_fetch_text
+ * and spool_store.
+ */
+
 #include	<sys/types.h>
 #include	<sys/stat.h>
 #include	<sys/mman.h>
@@ -101,11 +107,32 @@ static void	spool_file_open(spool_id_t, int create);
 static void	spool_file_close(spool_id_t, int delete);
 static ssize_t	spool_read_header(spool_file_t *, spool_offset_t, spool_header_t *);
 static void	spool_write_eos(spool_file_t *, spool_offset_t);
-static void	spool_write_size(uv_timer_t *, int);
+static void	spool_do_write_size(uv_timer_t *, int);
+static void	spool_write_size(void);
+
+#ifdef notyet
+static uv_mutex_t	 spool_queue_mtx;
+static uv_thread_t	 spool_thread;
+static uv_loop_t	*spool_loop;
+statuc uv_async_t	 spool_wakeup;
+static void	 spool_thread_run(void *);
+
+spool_store_req_t	*spool_queue,
+			*spool_queue_tail;
+#endif
+
+static uv_rwlock_t	 spool_mtx;
 
 int
 spool_init()
 {
+#if notyet
+	spool_loop = uv_loop_new();
+	uv_mutex_init(&spool_queue_mtx);
+#else
+	uv_rwlock_init(&spool_mtx);
+#endif
+
 	config_add_stanza(&spool_stanza);
 	return 0;
 }
@@ -202,13 +229,28 @@ struct dirent	*de;
 		spool_file_open(0, 1);
 		spool_cur_file = 0;
 	}
-	spool_write_size(NULL, 0);
+	spool_write_size();
 
+#ifdef notyet
+	uv_thread_create(&spool_thread, spool_thread_run, NULL);
+#else
 	uv_timer_init(loop, &spool_timer);
-	uv_timer_start(&spool_timer, spool_write_size, 10 * 1000, 10 * 1000);
-
+	uv_timer_start(&spool_timer, spool_do_write_size, 10 * 1000, 10 * 1000);
+#endif
 	return 0;
 }
+
+#ifdef notyet
+static void
+spool_thread_run(p)
+	void	*p;
+{
+	uv_timer_init(spool_loop, &spool_timer);
+	uv_timer_start(&spool_timer, spool_do_write_size, 10 * 1000, 10 * 1000);
+
+	uv_run(spool_loop, UV_RUN_DEFAULT);
+}
+#endif
 
 void
 spool_close(void)
@@ -219,7 +261,7 @@ int
 spool_store(art)
 	article_t	*art;
 {
-spool_file_t	*sf = &spool_files[spool_cur_file];
+spool_file_t	*sf;
 unsigned char	*hdr;
 unsigned char	 hdrbuf[SPOOL_HDR_SIZE * 2];
 int		 hdrpos = 0;
@@ -228,8 +270,11 @@ int		 ret;
 unsigned char	*data;
 unsigned long	 datalen;
 
+	uv_rwlock_wrlock(&spool_mtx);
+	sf = &spool_files[spool_cur_file];
+
 	if (sf->sf_size + artlen + SPOOL_HDR_SIZE*2 >= sf->sf_dsz) {
-		spool_write_size(NULL, 0);
+		spool_write_size();
 
 		/* Spool file is full, rotate (if necessary) and open another one. */
 		if ((spool_cur_file + 1) == spool_max_files) {
@@ -321,6 +366,7 @@ unsigned long	 datalen;
 
 	sf->sf_size += SPOOL_HDR_SIZE + datalen;
 
+	uv_rwlock_wrunlock(&spool_mtx);
 	return 0;
 }
 
@@ -366,13 +412,17 @@ char		*artstr;
 spool_file_t	*sf;
 size_t		 artloc;
 
+	uv_rwlock_rdlock(&spool_mtx);
+
 	if (spid < spool_base || spid > (spool_base + spool_cur_file)) {
+		uv_rwlock_rdunlock(&spool_mtx);
 		errno = EINVAL;
 		return -1;
 	}
 
 	sf = &spool_files[spid - spool_base];
 	if (spos + SPOOL_HDR_SIZE > sf->sf_size) {
+		uv_rwlock_rdunlock(&spool_mtx);
 		errno = EINVAL;
 		return -1;
 	}
@@ -380,6 +430,7 @@ size_t		 artloc;
 	spool_read_header(sf, spos, hdr);
 
 	if (hdr->sa_magic == SPOOL_MAGIC_EOS) {
+		uv_rwlock_rdunlock(&spool_mtx);
 		errno = EINVAL;
 		return -1;
 	}
@@ -388,6 +439,7 @@ size_t		 artloc;
 		nts_log(LOG_WARNING, "spool: \"%s\": article at %X,%lu: "
 			"bad magic", sf->sf_fname,
 			(int) spid, (long unsigned) spos);
+		uv_rwlock_rdunlock(&spool_mtx);
 		errno = EIO;
 		return -1;
 	}
@@ -398,6 +450,7 @@ size_t		 artloc;
 		nts_log(LOG_WARNING, "spool: \"%s\": article at %.8lX/%lu goes "
 			       "past end of spool file", sf->sf_fname,
 			       (long unsigned) spid, (long unsigned) spos);
+		uv_rwlock_rdunlock(&spool_mtx);
 		errno = EIO;
 		return -1;
 	}
@@ -418,6 +471,7 @@ size_t		 artloc;
 				free(artdata);
 				artdata = NULL;
 			}
+			uv_rwlock_rdunlock(&spool_mtx);
 			errno = EIO;
 			return -1;
 		}
@@ -444,6 +498,7 @@ size_t		 artloc;
 			free(data);
 			data = NULL;
 
+			uv_rwlock_rdunlock(&spool_mtx);
 			errno = EIO;
 			return -1;
 		}
@@ -465,14 +520,25 @@ size_t		 artloc;
 	}
 
 	*text = artstr;
+	uv_rwlock_rdunlock(&spool_mtx);
 	return 0;
 }
 
 static void
-spool_write_size(timer, status)
+spool_do_write_size(timer, status)
 	uv_timer_t	*timer;
 {
-spool_file_t	*sf = &spool_files[spool_cur_file];
+	uv_rwlock_wrlock(&spool_mtx);
+	spool_write_size();
+	uv_rwlock_wrunlock(&spool_mtx);
+}
+
+static void
+spool_write_size()
+{
+spool_file_t	*sf;
+
+	sf = &spool_files[spool_cur_file];
 
 	if (spool_method == M_MMAP) {
 		int64put(sf->sf_addr, sf->sf_size);
@@ -609,7 +675,7 @@ error:
 void
 spool_shutdown()
 {
-	spool_write_size(NULL, 0);
+	spool_write_size();
 }
 
 static void

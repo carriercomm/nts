@@ -129,8 +129,6 @@ void	 reader_handoff(uv_tcp_t *);
 void	 client_pause(client_t *);
 void	 client_unpause(client_t *);
 
-extern uv_loop_t	*client_loop;
-extern uv_async_t	 reply_ev;
 void	 client_do_replies(uv_async_t *, int);
 
 /*

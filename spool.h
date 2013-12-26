@@ -52,7 +52,19 @@ void	spool_close(void);
  * Store the given article in the spool.  Returns 0 on success or -1 on 
  * failure.
  */
+#ifdef notyet
+typedef struct spool_store_req {
+	void	*data;	
+
+	struct spool_store_req	*ss_next;
+} spool_store_req_t;
+
+typedef void (*spool_store_cb) (spool_store_req_t *, int status);
+
+int	spool_store(struct article *, spool_store_cb);
+#else
 int	spool_store(struct article *);
+#endif
 
 /*
  * Check the spool files for consistency.
