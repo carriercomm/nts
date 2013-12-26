@@ -148,6 +148,8 @@ on_work_done(req, status)
 incoming_work_t	*iw = req->data;
 
 	client_incoming_reply(iw->iw_client, iw->iw_status);
+	free(iw->iw_text);
+	free(iw->iw_msgid);
 	free(iw);
 	free(req);
 }
