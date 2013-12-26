@@ -30,7 +30,7 @@ char	*msgid = NULL;
 		 */
 		client_printf(client, "501 Syntax: TAKETHIS <message-id>\r\n");
 		client_log(LOG_INFO, client, "disconnected (missing message-id in TAKETHIS)");
-		client->cl_state = CS_DEAD;
+		client_close(client, 1);
 		return;
 	}
 
