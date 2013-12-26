@@ -68,7 +68,7 @@ size_t		 m;
 			break;
 
 		if ((p = index(line, ':')) == NULL) {
-			nts_log(LOG_INFO, "article without colon in header");
+			nts_log(LOG_INFO, "article without colon in header: [%s]", line);
 			goto err;
 		}
 
@@ -275,7 +275,7 @@ size_t		 n;
 	art->art_content = realloc(art->art_content, strlen(art->art_content) + strlen(mypath) + 1);
 	bcopy(art->art_content + n,
 	      art->art_content + n + strlen(mypath),
-	      strlen(art->art_content) - n);
+	      (strlen(art->art_content) - n) + 1);
 	bcopy(mypath, art->art_content + n, strlen(mypath));
 }
 
