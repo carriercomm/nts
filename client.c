@@ -344,14 +344,20 @@ int	len;
 		free(r);
 }
 
+typedef struct client_write_req {
+	client_t	*client;
+	char		*buf;
+} client_write_req_t;
+
 static void
 on_client_write_done(wr, status)
 	uv_write_t	*wr;
 {
-client_t	*cl = wr->data;
+client_write_req_t	*cwr = wr->data;
+client_t		*cl = cwr->client;
 
-	if (wr->bufs)
-		free(wr->bufs[0].base);
+	free(cwr->buf);
+	free(cwr);
 	free(wr);
 
 	if (status == 0 || status == UV_ECANCELED ||
@@ -371,10 +377,11 @@ client_vprintf(client, fmt, ap)
 	char const	*fmt;
 	va_list		 ap;
 {
-char		*buf;
-int		 len;
-uv_write_t	*wr;
-uv_buf_t	 ubuf;
+char			*buf;
+int			 len;
+uv_write_t		*wr;
+uv_buf_t		 ubuf;
+client_write_req_t	*cwr;
 
 #define PRINTF_BUFSZ	1024
 
@@ -386,9 +393,13 @@ uv_buf_t	 ubuf;
 	}
 
 	wr = xcalloc(1, sizeof(*wr));
-
 	ubuf = uv_buf_init(buf, len);
-	wr->data = client;
+
+	cwr = xcalloc(1, sizeof(*cwr));
+	cwr->client = client;
+	cwr->buf = buf;
+
+	wr->data = cwr;
 
 	uv_write(wr, (uv_stream_t *) client->cl_stream, &ubuf, 1, on_client_write_done);
 }
