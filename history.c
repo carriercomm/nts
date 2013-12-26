@@ -228,6 +228,11 @@ db_recno_t	 recno = 0;
 			return 0;
 		}
 
+		if (ret == DB_LOCK_DEADLOCK) {
+			txn->abort(txn);
+			continue;
+		}
+
 		if (ret && (ret != DB_NOTFOUND))
 			panic("history: failed to check history entry: %s",
 			      db_strerror(ret));
