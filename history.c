@@ -98,8 +98,12 @@ int	ret;
 		return -1;
 	}
 
-	history_db->associate(history_db, NULL, history_by_msgid, 
-			history_get_msgid, DB_AUTO_COMMIT);
+	if (ret = history_db->associate(history_db, NULL, history_by_msgid, 
+					history_get_msgid, DB_AUTO_COMMIT)) {
+		nts_log(LOG_ERR, "history: cannot associate msgid database: %s",
+			db_strerror(ret));
+		return -1;
+	}
 
 	uv_timer_init(loop, &history_clean_timer);
 	uv_timer_start(&history_clean_timer, history_run_clean, 3600 * 1000, 3600 * 1000);
@@ -191,7 +195,7 @@ int
 history_add(mid)
 	char const	*mid;
 {
-DBT		 key, data;
+DBT		 key, mkey, data;
 int		 ret;
 time_t		 now = time(NULL);
 char		 dbuf[250 + 8];
@@ -202,20 +206,36 @@ db_recno_t	 recno = 0;
 	bzero(&data, sizeof(data));
 
 	key.data = &recno;
+	key.size = sizeof(recno);
 	key.ulen = sizeof(recno);
 	key.flags = DB_DBT_USERMEM;
 
+	mkey.data = (void *) mid;
+	mkey.size = strlen(mid);
+
 	data.data = &dbuf;
 	data.size = sizeof(dbuf);
-
-	bzero(dbuf, sizeof(dbuf));
-	int64put(dbuf, now);
-
-	assert(strlen(mid) <= 250);
-	bcopy(mid, dbuf + 8, strlen(mid));
+	data.ulen = sizeof(dbuf);
+	data.flags = DB_DBT_USERMEM;
 
 	for (;;) {
 		txn = db_new_txn(DB_TXN_WRITE_NOSYNC);
+
+		ret = history_by_msgid->get(history_by_msgid, txn, &mkey, &data, 0);
+		if (ret == 0) {
+			txn->abort(txn);
+			return 0;
+		}
+
+		if (ret && (ret != DB_NOTFOUND))
+			panic("history: failed to check history entry: %s",
+			      db_strerror(ret));
+
+		bzero(dbuf, sizeof(dbuf));
+		int64put(dbuf, now);
+
+		assert(strlen(mid) <= 250);
+		bcopy(mid, dbuf + 8, strlen(mid));
 
 		if (ret = history_db->put(history_db, txn, &key, &data, DB_APPEND)) {
 			if (ret == DB_LOCK_DEADLOCK) {
