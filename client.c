@@ -23,7 +23,6 @@
 #include	<fcntl.h>
 #include	<pthread.h>
 
-#include	<ev.h>
 #include	<uv.h>
 
 #include	"setup.h"

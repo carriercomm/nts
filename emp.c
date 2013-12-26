@@ -13,7 +13,6 @@
 #include	<assert.h>
 
 #include	<db.h>
-#include	<ev.h>
 
 #include	"log.h"
 #include	"emp.h"

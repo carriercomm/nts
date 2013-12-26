@@ -9,7 +9,7 @@
  */
 
 #include	<pthread.h>
-#include	<ev.h>
+#include	<uv.h>
 
 #include	"incoming.h"
 #include	"client.h"
@@ -19,8 +19,8 @@
 
 static	pthread_t	incoming_thread;
 
-static struct ev_loop	*incoming_loop;
-ev_async		 incoming_ev;
+static uv_loop_t	*incoming_loop;
+uv_async_t		 incoming_ev;
 
 typedef struct pending {
 	client_t	*pe_client;
@@ -34,15 +34,14 @@ pthread_mutex_t		 pending_mtx;
 int			 npending;
 
 static void	*do_incoming(void *);
-static void	 incoming_wakeup(struct ev_loop *, ev_async *, int);
+static void	 incoming_wakeup(uv_async_t *, status);
 static int	 handle_one_article(pending_t *);
 static void	 incoming_reply(pending_t *, int);
 
 int
 incoming_init()
 {
-	incoming_loop = ev_loop_new(ev_supported_backends());
-	ev_async_init(&incoming_ev, incoming_wakeup);
+	incoming_loop = uv_loop_new();
 	pthread_mutex_init(&pending_mtx, NULL);
 	return 0;
 }
@@ -57,15 +56,14 @@ static void *
 do_incoming(p)
 	void	*p;
 {
-	ev_async_start(incoming_loop, &incoming_ev);
-	ev_run(incoming_loop, 0);
+	uv_async_init(incoming_loop, &incoming_ev, incoming_wakeup);
+	uv_run(incoming_loop, UV_RUN_DEFAULT);
 	return NULL;
 }
 
 static void
-incoming_wakeup(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_async	*w;
+incoming_wakeup(async, status)
+	uv_async_t	*async;
 {
 pending_t	*list, *e, *next;
 const char	**mids, **p;
@@ -192,7 +190,7 @@ pending_t	*pe = xcalloc(1, sizeof(*pe));
 	pe->pe_next = pending_list;
 	pending_list = pe;
 	++npending;
-	ev_async_send(incoming_loop, &incoming_ev);
+	uv_async_send(&incoming_ev);
 
 	pthread_mutex_unlock(&pending_mtx);
 }

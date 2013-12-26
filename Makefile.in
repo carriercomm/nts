@@ -47,20 +47,20 @@ SRCS		= nts.c		config.c	ctl.c		client.c	\
 EXTRA_SRCS	= @EXTRA_SRCS@
 OBJS		= ${SRCS:.c=.o} ${EXTRA_SRCS:.c=.o}
 
-HDRS		= article.h config.h database.h filter.h history.h net.h	\
+HDRS		= article.h config.h database.h filter.h history.h 		\
 		  client.h crc.h feeder.h hash.h log.h nts.h server.h		\
-		  spool.h wildmat.h queue.h charq.h rfile.h balloc.h auth.h	\
-		  crypt.h thread.h emp.h dns.h base64.h
+		  spool.h wildmat.h queue.h charq.h rfile.h auth.h		\
+		  crypt.h emp.h base64.h
 EXTRA_DIST	= Makefile.in nts.conf.example parser.y lexer.l setup.h.in	\
 		  configure.ac configure LICENSE strlcpy.c 
 all: nts
 
-dist:
+dist: ${SRCS} ${HDRS} ${EXTRA_DIST}
 	@version=`sed -n 's/^AC_INIT(\[[^]]*\], \[\([^]]*\)\], \[[^]]*\])$$/\1/p' \
-	    		configure.ac`;						\
+	    		${top_srcdir}/configure.ac`;				\
 	rm -rf nts-$$version;							\
 	mkdir nts-$$version;							\
-	cp ${SRCS} ${HDRS} ${EXTRA_DIST} nts-$$version/;			\
+	cp $< nts-$$version/;							\
 	tar cf nts-$$version.tar nts-$$version;					\
 	gzip -f nts-$$version.tar;						\
 	ls -l nts-$$version.tar.gz

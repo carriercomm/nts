@@ -23,8 +23,6 @@
 #include	<fcntl.h>
 #include	<ctype.h>
 
-#include	<ev.h>
-
 #include	"setup.h"
 
 #ifdef HAVE_OPENSSL
@@ -156,9 +154,7 @@ char		*s;
 			case 'V':
 				printf("RT/NTS %s\n", PACKAGE_VERSION);
 				printf("\t%s\n", db_version(NULL, NULL, NULL));
-				printf("\tlibev %d.%d\n",
-						ev_version_major(),
-						ev_version_minor());
+				printf("\tlibuv %s\n", uv_version_string());
 #ifdef HAVE_OPENSSL
 				printf("\t%s\n", SSLeay_version(SSLEAY_VERSION));
 #endif
