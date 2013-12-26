@@ -18,7 +18,6 @@
 
 #include	"charq.h"
 #include	"nts.h"
-#include	"balloc.h"
 
 void
 cq_init()
@@ -40,6 +39,7 @@ cq_free(cq)
 charq_ent_t	*cqe;
 	while (cqe = TAILQ_FIRST(&cq->cq_ents)) {
 		TAILQ_REMOVE(&cq->cq_ents, cqe, cqe_list);
+		free(cqe->cqe_data);
 		free(cqe);
 	}
 	free(cq);
@@ -47,28 +47,16 @@ charq_ent_t	*cqe;
 
 void
 cq_append(cq, data, sz)
-	charq_t		*cq;
-	char const	*data;
-	size_t		 sz;
+	charq_t	*cq;
+	char	*data;
+	size_t	 sz;
 {
-	if (!TAILQ_EMPTY(&cq->cq_ents)) {
-	size_t		 todo = sz > cq_left(cq) ? cq_left(cq) : sz;
-		bcopy(data, cq_last_ent_free(cq), todo);
-		sz -= todo;
-		data += todo;
-		cq->cq_len += todo;
-	}
+charq_ent_t	*new = xcalloc(1, sizeof(*new));
+	new->cqe_data = data;
+	new->cqe_len = sz;
+	cq->cq_len += sz;
 
-	while (sz) {
-	charq_ent_t	*new;
-	size_t		 todo = sz > CHARQ_BSZ ? CHARQ_BSZ : sz;
-		new = xcalloc(1, sizeof(*new));
-		bcopy(data, new->cqe_data, todo);
-		cq->cq_len += todo;
-		sz -= todo;
-		data += todo;
-		TAILQ_INSERT_TAIL(&cq->cq_ents, new, cqe_list);
-	}
+	TAILQ_INSERT_TAIL(&cq->cq_ents, new, cqe_list);
 }
 
 void
@@ -76,97 +64,78 @@ cq_remove_start(cq, sz)
 	charq_t	*cq;
 	size_t	 sz;
 {
+charq_ent_t	 *cqe;
+
 	assert(sz <= cq_len(cq));
-	while (sz >= (CHARQ_BSZ - cq->cq_offs)) {
-	charq_ent_t	*n = cq_first_ent(cq);
-		TAILQ_REMOVE(&cq->cq_ents, n, cqe_list);
-		free(n);
-		cq->cq_len -= (CHARQ_BSZ - cq->cq_offs);
-		sz -= (CHARQ_BSZ - cq->cq_offs);
+
+	while (sz) {
+	size_t		 n;
+
+		cqe = cq_first_ent(cq);
+		n = (cqe->cqe_len - cq->cq_offs);
+
+		if (sz < n)
+			break;
+
+		TAILQ_REMOVE(&cq->cq_ents, cqe, cqe_list);
+
+		cq->cq_len -= n;
 		cq->cq_offs = 0;
+
+		sz -= n;
+
+		free(cqe->cqe_data);
+		free(cqe);
 	}
 
+	if (!sz)
+		return;
+
+	cqe = cq_first_ent(cq);
 	cq->cq_offs += sz;
 	cq->cq_len -= sz;
 }
 
-ssize_t
-cq_write(cq, fd)
-	charq_t	*cq;
-{
-ssize_t		i = 0;
-charq_ent_t	*first = cq_first_ent(cq);
-
-	while (cq_len(cq)) {
-	ssize_t	n;
-		first = cq_first_ent(cq);
-		n = write(fd, first->cqe_data + cq->cq_offs, 
-			cq_nents(cq) > 1 
-				? (CHARQ_BSZ - cq->cq_offs)
-				: cq_len(cq));
-		if (n <= 0)
-			return n;
-
-		cq_remove_start(cq, n);
-		i += n;
-	}
-
-	return i;
-}
-
 void
-cq_extract_start(cq, buf, len)
+cq_extract_start(cq, buf, sz)
 	charq_t	*cq;
 	void	*buf;
-	size_t	 len;
+	size_t	 sz;
 {
 unsigned char	*bufp = buf;
-charq_ent_t	*first = cq_first_ent(cq);
+charq_ent_t	 *cqe;
 
-	while (len && cq_len(cq)) {
-	ssize_t	n;
-		first = cq_first_ent(cq);
-		n = cq_nents(cq) > 1 
-			? (CHARQ_BSZ - cq->cq_offs)
-			: cq_len(cq);
-		if (n > len)
-			n = len;
-		bcopy(first->cqe_data + cq->cq_offs,
-		      bufp, n);
-		len -= n;
+	assert(sz <= cq_len(cq));
+
+	while (sz) {
+	size_t		 n;
+
+		cqe = cq_first_ent(cq);
+		n = (cqe->cqe_len - cq->cq_offs);
+		if (sz < n)
+			break;
+
+		TAILQ_REMOVE(&cq->cq_ents, cqe, cqe_list);
+
+		bcopy(cqe->cqe_data + cq->cq_offs, bufp, n);
+
+		cq->cq_len -= n;
+		cq->cq_offs = 0;
+
+		sz -= n;
 		bufp += n;
-		cq_remove_start(cq, n);
-	}
-}
 
-ssize_t
-cq_read(cq, fd)
-	charq_t	*cq;
-{
-ssize_t	n;	
-	if (cq_left(cq) == 0) {
-	charq_ent_t	*cqe = xcalloc(1, sizeof(*cqe));;
-		n = read(fd, cqe->cqe_data, CHARQ_BSZ);
-		if (n <= 0) {
-			if (n == -1 && errno == EINVAL)
-				abort();
-			free(cqe);
-			return n;
-		}
-		cq->cq_len += n;
-		TAILQ_INSERT_TAIL(&cq->cq_ents, cqe, cqe_list);
-		return n;
+		free(cqe->cqe_data);
+		free(cqe);
 	}
 
-	n = read(fd, cq_last_ent_free(cq), cq_left(cq));
+	if (!sz)
+		return;
 
-	if (n == -1 && errno == EINVAL)
-		abort();
-
-	if (n > 0)
-		cq->cq_len += n;
-
-	return n;
+	cqe = cq_first_ent(cq);
+	bcopy(cqe->cqe_data + cq->cq_offs, bufp, sz);
+	cq->cq_offs += sz;
+	cq->cq_len -= sz;
 }
 
 static ssize_t
@@ -174,30 +143,18 @@ cq_find(cq, c)
 	charq_t	*cq;
 	char	 c;
 {
-char		*p;
-charq_ent_t	*e;
-size_t		 i = 0, flen;
+size_t		 i = 0, offs = cq->cq_offs;
+charq_ent_t	*cqe;
 
-	if (cq_len(cq) == 0)
-		return -1;
-	
-	flen = CHARQ_BSZ - cq->cq_offs;
-	if (flen > cq_len(cq))
-		flen = cq_len(cq);
+	TAILQ_FOREACH(cqe, &cq->cq_ents, cqe_list) {
+	char	*r;
+		if (r = memchr(cqe->cqe_data + offs, c, cqe->cqe_len - offs))
+			return i + (r - (cqe->cqe_data + offs));
 
-	for (e = cq_first_ent(cq), p = e->cqe_data + cq->cq_offs;
-	     p < (e->cqe_data + cq->cq_offs + flen); p++) {
-		if (*p == c)
-			return p - (e->cqe_data + cq->cq_offs);
+		i += cqe->cqe_len;
+		offs = 0;
 	}
-	i = CHARQ_BSZ - cq->cq_offs;
-	for (e = TAILQ_NEXT(e, cqe_list); e; e = TAILQ_NEXT(e, cqe_list)) {
-		for (p = e->cqe_data; i < cq->cq_len && p < (e->cqe_data + CHARQ_BSZ); p++, i++) {
-			if (*p == c) {
-				return i;
-			}
-		}
-	}
+
 	return -1;
 }
 

@@ -18,12 +18,10 @@
 #include	"article.h"
 #include	"nts.h"
 #include	"log.h"
-#include	"balloc.h"
 
 static int	article_classify(article_t *);
 static time_t	parse_date(char const *);
-
-balloc_t	*ba_article;
+static size_t	article_size;
 
 void
 article_init()
@@ -33,7 +31,7 @@ article_init()
 void
 article_run()
 {
-	ba_article = balloc_new(sizeof(article_t) + bs_size(nfilters), 128, "article");
+	article_size = sizeof(article_t) + bs_size(nfilters);
 }
 
 article_t *
@@ -45,7 +43,7 @@ char		*line = NULL, *groups = NULL, *groups_ = NULL, *body = NULL;
 char		*text, *otext, *p;
 size_t		 m;
 	
-	article = bzalloc(ba_article);
+	article = xcalloc(1, article_size);
 	article->art_filters = (bs_word_t *) ((char *) article + sizeof(article_t));
 
 	SIMPLEQ_INIT(&article->art_groups);
@@ -56,7 +54,7 @@ size_t		 m;
 
 	if (!line) {
 		free(article->art_content);
-		bfree(ba_article, article);
+		free(article);
 		free(otext);
 		nts_log(LOG_INFO, "received empty article?");
 		return NULL;
@@ -228,7 +226,7 @@ strlist_entry_t	*ge;
 		free(ge);
 	}
 
-	bfree(ba_article, art);
+	free(art);
 }
 
 void

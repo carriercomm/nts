@@ -50,8 +50,8 @@ if test "$use_ssl" = yes; then
 	     ])
 fi
 
-AC_CHECK_LIB([ev], [ev_run], [], [AC_MSG_ERROR([cannot find libev])])
-AC_CHECK_HEADER([ev.h], [], [AC_MSG_ERROR([cannot find ev.h])])
+AC_CHECK_LIB([uv], [uv_run], [], [AC_MSG_ERROR([cannot find libuv])])
+AC_CHECK_HEADER([uv.h], [], [AC_MSG_ERROR([cannot find uv.h])])
 
 AC_CHECK_LIB([z], [compress], [], [AC_MSG_ERROR([cannot find zlib])])
 AC_CHECK_HEADER([zlib.h], [], [AC_MSG_ERROR([cannot find zlib.h])])

@@ -18,6 +18,7 @@ c_starttls(client, cmd, line)
 	client_t	*client;
 	char		*cmd, *line;
 {
+#if 0
 #ifndef HAVE_OPENSSL
 	client_printf(client, "580 TLS not available.\r\n");
 	return;
@@ -35,6 +36,7 @@ c_starttls(client, cmd, line)
 	client_printf(client, "382 OK, start negotiation.\r\n");
 	net_starttls(client->cl_fd, client->cl_listener->li_ssl, client_tls_done);
 #endif
+#endif
 }
 
 static void
@@ -42,7 +44,8 @@ client_tls_done(fd, ssl, udata)
 	SSL	*ssl;
 	void	*udata;
 {
+#if 0
 client_t	*client = udata;
 	client->cl_ssl = ssl;
+#endif
 }
-

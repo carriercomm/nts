@@ -21,15 +21,16 @@
 #include	"database.h"
 #include	"nts.h"
 #include	"net.h"
-#include	"thread.h"
 
 static int	 history_get_msgid(DB *, DBT const *, DBT const *, DBT *);
-static void	*history_clean(void *);
-static void	 history_run_clean(void *);
+static void	 history_clean(uv_work_t *);
+static void	 history_clean_done(uv_work_t *, int);
+static void	 history_run_clean(uv_timer_t *, int);
 
-static DB	*history_db;
-static DB	*history_by_msgid;
-static uint64_t	 remember;
+static DB		*history_db;
+static DB		*history_by_msgid;
+static uint64_t		 remember;
+static uv_timer_t	 history_clean_timer;
 
 static config_schema_opt_t history_opts[] = {
 	{ "remember", OPT_TYPE_DURATION, config_simple_duration, &remember },
@@ -100,7 +101,9 @@ int	ret;
 	history_db->associate(history_db, NULL, history_by_msgid, 
 			history_get_msgid, DB_AUTO_COMMIT);
 
-	net_cron(3600, history_run_clean, NULL);
+	uv_timer_init(loop, &history_clean_timer);
+	uv_timer_start(&history_clean_timer, history_run_clean, 3600 * 1000, 3600 * 1000);
+
 	return 0;
 }
 
@@ -251,15 +254,25 @@ history_get_msgid(sdb, pkey, pdata, skey)
 }
 
 static void
-history_run_clean(udata)
-	void	*udata;
+history_run_clean(timer, status)
+	uv_timer_t	*timer;
 {
-	thr_do_work(history_clean, NULL, NULL);
+uv_work_t	*req;
+	req = xcalloc(1, sizeof(*req));
+
+	uv_queue_work(loop, req, history_clean, history_clean_done);
 }
 
-static void *
-history_clean(udata)
-	void	*udata;
+static void
+history_clean_done(req, status)
+	uv_work_t	*req;
+{
+	free(req);
+}
+
+static void
+history_clean(req)
+	uv_work_t	*req;
 {
 time_t		 oldest;
 DBT		 key, data, delkeys;
@@ -353,7 +366,7 @@ deadlock:	;
 	free(delkeys.data);
 	nts_log(LOG_INFO, "history: expired %lu entries", (long unsigned) expired);
 
-	return NULL;
+	return;
 }
 
 void

@@ -25,7 +25,7 @@ typedef struct reply {
 static pthread_mutex_t	 reply_mtx = PTHREAD_MUTEX_INITIALIZER;
 static reply_t		*reply_list;
 
-ev_async		 reply_ev;
+uv_async_t		 reply_ev;
 
 static void	client_handle_reply(client_t *, int);
 
@@ -83,12 +83,11 @@ int	 rejected = (client->cl_state == CS_TAKETHIS) ? 439 : 437;
 
 	if (DEBUG(CIO))
 		client_log(LOG_DEBUG, client,
-			   "client %d takethis_done; process_article\n",
-			   client->cl_fd);
+			   "takethis_done; process_article\n");
 
 	process_article(client->cl_article, client->cl_msgid, client);
 	client->cl_flags |= CL_PENDING;
-	ev_io_stop(client_loop, &client->cl_readable);
+	client_pause(client);
 	return;
 
 err:
@@ -110,15 +109,14 @@ reply_t	*reply = xcalloc(1, sizeof(*reply));
 	pthread_mutex_lock(&reply_mtx);
 	reply->re_next = reply_list;
 	reply_list = reply;
-	ev_async_send(client_loop, &reply_ev);
+	uv_async_send(&reply_ev);
 	pthread_mutex_unlock(&reply_mtx);
 
 }
 
 void
-client_do_replies(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_async	*w;
+client_do_replies(handle, status)
+	uv_async_t	*handle;
 {
 reply_t	*list, *e, *next;
 
@@ -143,7 +141,7 @@ int	 rejected = (cl->cl_state == CS_TAKETHIS) ? 439 : 437;
 int	 accepted = (cl->cl_state == CS_TAKETHIS) ? 239 : 235;
 
 	if (DEBUG(CIO))
-		client_log(LOG_DEBUG, cl, "client %d got process reply\n", cl->cl_fd);
+		client_log(LOG_DEBUG, cl, "got process reply\n");
 
 	if (cl->cl_flags & (CL_DEAD | CL_DRAIN)) {
 		client_destroy(cl);
@@ -151,7 +149,7 @@ int	 accepted = (cl->cl_state == CS_TAKETHIS) ? 239 : 235;
 	}
 
 	cl->cl_flags &= ~CL_PENDING;
-	ev_io_start(client_loop, &cl->cl_readable);
+	client_unpause(cl);
 
 	if (reason == IN_OK)
 		client_printf(cl, "%d %s\r\n",
@@ -163,7 +161,4 @@ int	 accepted = (cl->cl_state == CS_TAKETHIS) ? 239 : 235;
 	cl->cl_state = CS_WAIT_COMMAND;
 	free(cl->cl_msgid);
 	cl->cl_msgid = NULL;
-
-	cl->cl_flags &= ~CL_PAUSED;
-	ev_io_start(client_loop, &cl->cl_readable);
 }

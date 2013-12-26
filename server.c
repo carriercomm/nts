@@ -23,7 +23,6 @@
 #include	"log.h"
 #include	"nts.h"
 #include	"net.h"
-#include	"dns.h"
 #include	"feeder.h"
 
 static void	*peer_stanza_start(conf_stanza_t *, void *);
@@ -47,11 +46,14 @@ static void	 peer_set_incoming_username(conf_stanza_t *, conf_option_t *, void *
 static void	 peer_set_outgoing_username(conf_stanza_t *, conf_option_t *, void *, void *);
 
 static void	 server_add_exclude(server_t *, char const *);
-static void	 server_resolve_done(char const *name, int err, address_list_t *, void *);
+static void	 on_server_dns_done(uv_getaddrinfo_t *, int, struct addrinfo *);
 static void	 rebuild_server_map(void);
-static void	 server_update_dns(void *);
+static void	 server_update_dns(uv_timer_t *, int);
 
-static void	 do_stats(void *);
+static void	 do_stats(uv_timer_t *, int);
+
+static uv_timer_t	stats_timer,
+			dns_timer;
 
 static config_schema_opt_t peer_opts[] = {
 	{ "port",			OPT_TYPE_NUMBER | OPT_TYPE_STRING,	peer_set_port },
@@ -87,7 +89,6 @@ server_list_t		 servers;
 static server_map_t	*server_map;
 static size_t		 smapsize;
 server_t		*default_server;
-balloc_t		*ba_sbe;
 
 int
 server_map_compare(a, b)
@@ -130,7 +131,6 @@ server_map_t	*match;
 int
 server_init()
 {
-	ba_sbe = balloc_new(sizeof(server_backlog_entry_t), 128, "sbe");
 	config_add_stanza(&peer_stanza);
 	return 0;
 }
@@ -162,12 +162,28 @@ int		 ret;
 	SLIST_FOREACH(se, &servers, se_list) {
 	hostlist_entry_t	*addr;
 
-		SLIST_FOREACH(addr, &se->se_accept_from, hl_list)
-			++se->se_resolving;
+		SLIST_FOREACH(addr, &se->se_accept_from, hl_list) {
+		uv_getaddrinfo_t	*req;
+		struct addrinfo		 hints;
+		int			 ret;
 
-		SLIST_FOREACH(addr, &se->se_accept_from, hl_list)
-			dns_resolve(addr->hl_host, NULL, DNS_TYPE_ANY,
-				    server_resolve_done, se);
+			bzero(&hints, sizeof(hints));
+			hints.ai_socktype = SOCK_STREAM;
+			hints.ai_family = PF_UNSPEC;
+			hints.ai_flags = AI_PASSIVE;
+
+			req = xcalloc(1, sizeof(*req));
+			req->data = se;
+
+			if (ret = uv_getaddrinfo(loop, req, on_server_dns_done,
+						 addr->hl_host, NULL, &hints)) {
+				nts_log(LOG_ERR, "peer \"%s\": cannot resolve \"%s\": %s",
+					se->se_name, addr->hl_host, uv_strerror(ret));
+				free(req);
+				continue;
+			}
+			++se->se_resolving;
+		}
 
 		snprintf(dbname, sizeof(dbname), "queue.%s.db", se->se_name);
 
@@ -204,24 +220,46 @@ int		 ret;
 
 	rebuild_server_map();
 
-	net_cron(stats_interval, do_stats, NULL);
-	net_cron(3600, server_update_dns, NULL);
+	uv_timer_init(loop, &stats_timer);
+	uv_timer_start(&stats_timer, do_stats, stats_interval * 1000,
+		       stats_interval * 1000);
+
+	uv_timer_init(loop, &dns_timer);
+	uv_timer_start(&dns_timer, server_update_dns,
+		       3600 * 1000, 3600 * 1000);
 	return 0;
 }
 
 static void
-server_update_dns(udata)
-	void	*udata;
+server_update_dns(timer, status)
+	uv_timer_t	*timer;
 {
 server_t		*se;
 hostlist_entry_t	*addr;
 	SLIST_FOREACH(se, &servers, se_list) {
-		SLIST_FOREACH(addr, &se->se_accept_from, hl_list)
-			++se->se_resolving;
+		SLIST_FOREACH(addr, &se->se_accept_from, hl_list) {
+		uv_getaddrinfo_t	*req;
+		struct addrinfo		 hints;
+		int			 ret;
 
-		SLIST_FOREACH(addr, &se->se_accept_from, hl_list)
-			dns_resolve(addr->hl_host, NULL, DNS_TYPE_ANY,
-				    server_resolve_done, se);
+			bzero(&hints, sizeof(hints));
+			hints.ai_socktype = SOCK_STREAM;
+			hints.ai_family = PF_UNSPEC;
+			hints.ai_flags = AI_PASSIVE;
+
+			req = xcalloc(1, sizeof(*req));
+			req->data = se;
+
+			if (ret = uv_getaddrinfo(loop, req, on_server_dns_done,
+						 addr->hl_host, NULL, &hints)) {
+				nts_log(LOG_ERR, "peer \"%s\": cannot resolve \"%s\": %s",
+					se->se_name, addr->hl_host, uv_strerror(ret));
+				free(req);
+				continue;
+			}
+
+			++se->se_resolving;
+		}
 	}
 }
 
@@ -331,32 +369,34 @@ server_t	*server = udata;
 }
 
 static void
-server_resolve_done(name, err, list, udata)
-	char const	*name;
-	address_list_t	*list;
-	void		*udata;
+on_server_dns_done(req, status, res)
+	uv_getaddrinfo_t	*req;
+	struct addrinfo		*res;
 {
-server_t	*se = udata;
+server_t	*se = req->data;
 address_t	*addr;
+struct addrinfo	*r;
 
 	assert(se->se_resolving);
 
-	if (err) {
-		nts_log(LOG_ERR, "error resolving accept-from address \"%s\" for "
-			"\"%s\": %s", name, se->se_name, dns_strerror(err));
+	if (status) {
+		nts_log(LOG_ERR, "error resolving accept-from address for "
+			"\"%s\": %s", se->se_name, uv_strerror(status));
 		return;
 	}
 
-	while (addr = SIMPLEQ_FIRST(list)) {
-		SIMPLEQ_REMOVE_HEAD(list, ad_list);
+	for (r = res; r; r = r->ai_next) {
+		addr = xcalloc(1, sizeof(*addr));
+		bcopy(r->ai_addr, &addr->ad_addr, r->ai_addrlen);
+		r->ai_addrlen = r->ai_addrlen;
+
 		SIMPLEQ_INSERT_TAIL(&se->se_resolvelist, addr, ad_list);
 	}
 
+	uv_freeaddrinfo(res);
+
 	if (--se->se_resolving)
 		return;
-
-	free(list);
-	list = NULL;
 
 	while (addr = SIMPLEQ_FIRST(&se->se_accept_addrs)) {
 		SIMPLEQ_REMOVE_HEAD(&se->se_accept_addrs, ad_list);
@@ -796,8 +836,8 @@ strlist_entry_t	*sle;
 }
 
 static void
-do_stats(udata)
-	void	*udata;
+do_stats(timer, status)
+	uv_timer_t	*timer;
 {
 server_t	*se;
 	SLIST_FOREACH(se, &servers, se_list) {

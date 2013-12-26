@@ -24,6 +24,7 @@
 #include	<pthread.h>
 
 #include	<ev.h>
+#include	<uv.h>
 
 #include	"setup.h"
 
@@ -45,16 +46,16 @@
 #include	"hash.h"
 #include	"filter.h"
 #include	"feeder.h"
-#include	"balloc.h"
 #include	"auth.h"
-#include	"thread.h"
 #include	"emp.h"
 #include	"incoming.h"
 
-static void	 client_readable(struct ev_loop *, ev_io *, int);
-static void	 client_writable(struct ev_loop *, ev_io *, int);
+static void	 on_client_read(uv_stream_t *, ssize_t, uv_buf_t const *);
+static void	 on_client_write_done(uv_write_t *, int);
+static void	 on_client_close_done(uv_handle_t *);
+static void	 on_client_shutdown_done(uv_shutdown_t *, int);
 
-static client_t	*client_new(int fd);
+static client_t	*client_new(uv_tcp_t *);
 static void	 client_vprintf(client_t *, char const *, va_list ap);
 static void	 client_vlog(int sev, client_t *, char const *, va_list ap);
 static void	 client_handle_line(client_t *, char *);
@@ -77,37 +78,16 @@ static struct {
 	{ "HELP",		c_help,		0 },
 };
 
-static balloc_t	*ba_client;
-
-static pthread_t	 client_thread;
-struct ev_loop		*client_loop;
-
-static void	*client_thread_run(void *);
-
-/*
- * When a client becomes readable or writable, we do nothing but add it to the 
- * appropriate list.  Then we process all clients at the end of the I/O loop.
- */
-static client_list_t	client_readable_list;
-static client_list_t	client_writable_list;
-static client_list_t	client_dead_list;
-static ev_prepare	client_prepare;
-
-static void		client_do_io(struct ev_loop *, ev_prepare *, int);
-
 int
 client_init()
 {
-	ba_client = balloc_new(sizeof(client_t), 128, "client");
+	if (client_reader_init() == -1)
+		return -1;
+
 	pending_init();
 	config_add_stanza(&listen_stanza);
 
-	SIMPLEQ_INIT(&client_readable_list);
-	SIMPLEQ_INIT(&client_writable_list);
-	SIMPLEQ_INIT(&client_dead_list);
-
-	ev_prepare_init(&client_prepare, client_do_io);
-	ev_async_init(&reply_ev, client_do_replies);
+	uv_async_init(loop, &reply_ev, client_do_replies);
 
 #ifdef HAVE_OPENSSL
 	SSL_load_error_strings();
@@ -117,7 +97,6 @@ client_init()
 	if (incoming_init() == -1)
 		return -1;
 
-	client_loop = ev_loop_new(ev_supported_backends());
 	return 0;
 }
 
@@ -128,24 +107,12 @@ client_run()
 		return -1;
 
 	incoming_run();
-	pthread_create(&client_thread, NULL, client_thread_run, NULL);
 	return 0;
 }
 
-void *
-client_thread_run(p)
-	void	*p;
-{
-	ev_prepare_start(client_loop, &client_prepare);
-	ev_async_start(client_loop, &reply_ev);
-	ev_run(client_loop, 0);
-	return NULL;
-}
-
 void
-client_accept(fd, addr, addrlen, ssl, li)
-	struct sockaddr	*addr;
-	socklen_t	 addrlen;
+client_accept(stream, ssl, li)
+	uv_tcp_t	*stream;
 	SSL		*ssl;
 	listener_t	*li;
 {
@@ -153,63 +120,58 @@ client_t	*client;
 server_t	*server;
 char		 host[NI_MAXHOST], serv[NI_MAXSERV],
 		 strname[NI_MAXHOST + NI_MAXSERV + 1024];
-int		 one = 1;
-int		 fl;
+int		 err;
 
-	if ((fl = fcntl(fd, F_GETFL, 0)) == -1) {
-		nts_log(LOG_ERR, "fcntl(F_GETFL): %s",
-			strerror(errno));
-		close(fd);
-		return;
-	}
+struct sockaddr_storage	addr;
+int			addrlen = sizeof(addr);
 
-	if ((fl = fcntl(fd, F_SETFL, fl | O_NONBLOCK)) == -1) {
-		nts_log(LOG_ERR, "fcntl(F_GETFL): %s",
-			strerror(errno));
-		close(fd);
-		return;
-	}
-
-	if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == -1) {
-		nts_log(LOG_ERR, "setsockopt(TCP_NODELAY): %s",
-			strerror(errno));
-		close(fd);
-		return;
-	}
-
-	client = client_new(fd);
+	client = client_new(stream);
 	client->cl_listener = li;
 	client->cl_ssl = ssl;
 	client->cl_rdbuf = cq_new();
-	client->cl_wrbuf = cq_new();
+	stream->data = client;
 
 	if (ssl)
 		client->cl_flags |= CL_SSL;
 
-	getnameinfo(addr, addrlen, host, sizeof(host), serv, sizeof(serv),
-			NI_NUMERICHOST | NI_NUMERICSERV);
+	if (err = uv_tcp_nodelay(stream, 0)) {
+		nts_log(LOG_ERR, "accept: uv_tcp_nodelay: %s",
+			uv_strerror(err));
+		client_close(client, 0);
+		return;
+	}
 
-	bcopy(addr, &client->cl_addr, addrlen);
+	if (err = uv_tcp_getpeername(stream, (struct sockaddr *) &addr, &addrlen)) {
+		nts_log(LOG_ERR, "accept: uv_tcp_getpeername: %s",
+			uv_strerror(err));
+		client_close(client, 0);
+		return;
+	}
+
+	if (err = getnameinfo((struct sockaddr *) &addr, addrlen,
+		    host, sizeof(host), serv, sizeof(serv),
+		    NI_NUMERICHOST | NI_NUMERICSERV)) {
+		nts_log(LOG_ERR, "accept: getnameinfo: %s",
+			gai_strerror(err));
+		client_close(client, 0);
+		return;
+	}
+
+	bcopy(&addr, &client->cl_addr, addrlen);
 	client->cl_addrlen = addrlen;
 
-	ev_io_init(&client->cl_readable, client_readable, fd, EV_READ);
-	client->cl_readable.data = client;
-
-	ev_io_init(&client->cl_writable, client_writable, fd, EV_WRITE);
-	client->cl_writable.data = client;
-
-	ev_io_start(client_loop, &client->cl_readable);
-
-	if ((server = server_find_by_address((struct sockaddr_storage *) addr)) == NULL
+	if ((server = server_find_by_address(&addr)) == NULL
 	    && !allow_unauthed) {
-		nts_log(LOG_NOTICE, "unknown[%s]:%s: connection rejected: access denied",
-				host, serv);
 		if (reader_handler) {
 			client_reader(client);
+			client_destroy(client);
 		} else {
+			nts_log(LOG_NOTICE, "unknown[%s]:%s: connection rejected: access denied",
+				host, serv);
 			client_printf(client, "502 Access denied (%s).\r\n", contact_address);
+			client_close(client, 1);
 		}
-		client_close(client, 1);
+
 		return;
 	}
 
@@ -235,169 +197,81 @@ int		 fl;
 	client_printf(client, "200 RT/NTS %s ready (%s).\r\n",
 			PACKAGE_VERSION,  contact_address);
 
+	uv_read_start((uv_stream_t *) stream, uv_alloc, on_client_read);
+
 	if (log_incoming_connections)
 		client_log(LOG_INFO, client, "client connected");
 }
 
-void
-client_readable(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_io		*w;
-{
-client_t	*cl = w->data;
-
-	if (DEBUG(CIO))
-		client_log(LOG_DEBUG, cl, "client %d becomes readable CL_READABLE=%d CL_DEAD=%d CL_PAUSED=%d", 
-			   cl->cl_fd, cl->cl_flags & CL_READABLE, cl->cl_flags & CL_DEAD,
-			   cl->cl_flags & CL_PAUSED);
-
-	if (cl->cl_flags & (CL_DEAD | CL_READABLE))
-		return;
-
-	cl->cl_flags |= CL_READABLE;
-	SIMPLEQ_INSERT_TAIL(&client_readable_list, cl, cl_read_list);
-}
-
-void
-client_writable(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_io		*w;
-{
-client_t	*cl = w->data;
-
-	if (DEBUG(CIO))
-		client_log(LOG_DEBUG, cl, "client %d becomes writable CL_READABLE=%d CL_DEAD=%d CL_PAUSED=%d", 
-			cl->cl_fd, cl->cl_flags & CL_READABLE, cl->cl_flags & CL_DEAD,
-			cl->cl_flags & CL_PAUSED);
-
-	if (cl->cl_flags & (CL_DEAD | CL_WRITABLE))
-		return;
-
-	cl->cl_flags |= CL_WRITABLE;
-	SIMPLEQ_INSERT_TAIL(&client_writable_list, cl, cl_write_list);
-}
-
 static void
-client_do_io(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_prepare	*w;
+on_client_read(stream, nread, buf)
+	uv_stream_t	*stream;
+	ssize_t		 nread;
+	uv_buf_t const	*buf;
 {
-client_t	*cl;
+client_t	*cl = stream->data;
 
 	if (DEBUG(CIO))
-		nts_log(LOG_DEBUG, "client_do_io runs");
+		client_log(LOG_DEBUG, cl, "on_client_read: nread=%d",
+			   (int) nread);
 
-	/*
-	 * Try to write data to each client.  If we see an error, mark the
-	 * client as dead; dead clients are cleaned up later.
-	 */
-	while (cl = SIMPLEQ_FIRST(&client_writable_list)) {
-		SIMPLEQ_REMOVE(&client_writable_list, cl, client, cl_write_list);
-
-		if (DEBUG(CIO))
-			client_log(LOG_DEBUG, cl, "client [%d] on writable list cq_len=%d",
-				   cl->cl_fd, (int) cq_len(cl->cl_wrbuf));
-
-		if (!(cl->cl_flags & CL_WRITABLE))
-			continue;
-
-		cl->cl_flags &= ~CL_WRITABLE;
-
-		if (cq_write(cl->cl_wrbuf, cl->cl_fd) == -1) {
-			client_log(LOG_INFO, cl, "write error: %s",
-					strerror(errno));
-			client_close(cl, 0);
-		}
-
-		/*
-		 * If we still have outstanding writes for the client,
-		 * mark it as paused, so we don't process any input from it.
-		 */
-		if (cq_len(cl->cl_wrbuf)) {
-			if (DEBUG(CIO))
-				client_log(LOG_DEBUG, cl, "client [%d] unflushed, pausing reads",
-					   cl->cl_fd);
-			cl->cl_flags |= CL_PAUSED;
-			ev_io_stop(client_loop, &cl->cl_readable);
-		} else {
-			if (DEBUG(CIO))
-				client_log(LOG_DEBUG, cl, "client [%d] flushed", cl->cl_fd);
-			ev_io_stop(client_loop, &cl->cl_writable);
-			cl->cl_flags &= ~CL_PAUSED;
-
-			if (cl->cl_flags & CL_DRAIN)
-				client_close(cl, 0);
-		}
+	if (nread == 0 || nread == UV_ECANCELED ||
+	    (cl->cl_flags & CL_DEAD)) {
+		free(buf->base);
+		return;
 	}
 
-	/*
-	 * Handle each readable client.  Ignore dead and paused clients.
-	 */
-	while (cl = SIMPLEQ_FIRST(&client_readable_list)) {
-	int	nl = 0;
-	ssize_t	n;
-
-		if (DEBUG(CIO))
-			client_log(LOG_DEBUG, cl, 
-				"client %d on read list CL_READABLE=%d CL_DEAD=%d CL_PAUSED=%d", 
-				cl->cl_fd, cl->cl_flags & CL_READABLE, cl->cl_flags & CL_DEAD,
-				cl->cl_flags & CL_PAUSED);
-
-		SIMPLEQ_REMOVE(&client_readable_list, cl, client, cl_read_list);
-
-		if (!(cl->cl_flags & CL_READABLE))
-			continue;
-
-		cl->cl_flags &= ~CL_READABLE;
-
-		if (cl->cl_flags & (CL_DEAD | CL_PAUSED | CL_PENDING)) {
-			ev_io_stop(client_loop, &cl->cl_readable);
-			continue;
-		}
-
-		if ((n = cq_read(cl->cl_rdbuf, cl->cl_fd)) <= 0) {
-			client_close(cl, 0);
-			if (n == 0)
+	if (nread < 0) {
+		if (log_incoming_connections)
+			if (nread == UV_EOF)
 				client_log(LOG_INFO, cl, "disconnected (EOF)");
 			else
-				client_log(LOG_INFO, cl, "read error: %s",
-					strerror(errno));
-			continue;
-		}
-
-		if (DEBUG(CIO))
-			client_log(LOG_DEBUG, cl,
-				"client %d read %d", cl->cl_fd, (int) n);
-
-		for (;;) {
-		char	*ln;
-
-			if (DEBUG(CIO))
-				client_log(LOG_DEBUG, cl, 
-					   "client %d cq_len=%d", cl->cl_fd,
-					   (int) cq_len(cl->cl_rdbuf));
-
-			if ((ln = cq_read_line(cl->cl_rdbuf)) == NULL)
-				break;
-			client_handle_line(cl, ln);
-			free(ln);
-			ln = NULL;
-
-			if (cl->cl_flags & (CL_DEAD | CL_PAUSED | CL_PENDING)) {
-				ev_io_stop(client_loop, &cl->cl_readable);
-				break;
-			}
-		}
+				client_log(LOG_INFO, cl, "disconnected (read error: %s)",
+					   uv_strerror(nread));
+		client_close(cl, 0);
+		free(buf->base);
+		return;
 	}
 
-	/*
-	 * Clean up any clients which have become dead.
-	 */
-	while (cl = SIMPLEQ_FIRST(&client_dead_list)) {
-		SIMPLEQ_REMOVE(&client_dead_list, cl, client, cl_dead_list);
+	if (cl->cl_flags & CL_DEAD) {
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, "on_client_read: client is dead");
 
-		if (!(cl->cl_flags & CL_PENDING))
-			client_destroy(cl);
+		free(buf->base);
+		return;
+	}
+
+	cq_append(cl->cl_rdbuf, buf->base, nread);
+
+	if (cl->cl_flags & CL_PAUSED) {
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, "on_client_read: client is paused");
+
+		return;
+	}
+
+	if (cl->cl_flags & CL_PENDING) {
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, "on_client_read: client is pending");
+
+		return;
+	}
+
+	for (;;) {
+	char	*ln;
+
+		if ((ln = cq_read_line(cl->cl_rdbuf)) == NULL)
+			break;
+
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, "incoming: [%s]", ln);
+
+		client_handle_line(cl, ln);
+		free(ln);
+		ln = NULL;
+
+		if (cl->cl_flags & (CL_DEAD | CL_PAUSED | CL_PENDING))
+			break;
 	}
 }
 
@@ -471,26 +345,52 @@ int	len;
 }
 
 static void
+on_client_write_done(wr, status)
+	uv_write_t	*wr;
+{
+client_t	*cl = wr->data;
+
+	if (wr->bufs)
+		free(wr->bufs[0].base);
+	free(wr);
+
+	if (status == 0 || status == UV_ECANCELED ||
+	    (cl->cl_flags & CL_DEAD))
+		return;
+
+	if (log_incoming_connections)
+		client_log(LOG_INFO, cl, "write error: %s",
+			   uv_strerror(status));
+
+	client_close(cl, 0);
+}
+
+static void
 client_vprintf(client, fmt, ap)
 	client_t	*client;
 	char const	*fmt;
 	va_list		 ap;
 {
-char	buf[8192];
-char	*r = buf;
-int	len;
+char		*buf;
+int		 len;
+uv_write_t	*wr;
+uv_buf_t	 ubuf;
 
-	len = vsnprintf(buf, sizeof(buf), fmt, ap);
-	if ((unsigned int) len >= sizeof (buf)) {
-		r = xmalloc(len + 1);
-		vsnprintf(r, len + 1, fmt, ap);
+#define PRINTF_BUFSZ	1024
+
+	buf = malloc(PRINTF_BUFSZ);
+	len = vsnprintf(buf, PRINTF_BUFSZ, fmt, ap);
+	if ((unsigned int) len >= PRINTF_BUFSZ) {
+		buf = xrealloc(buf, len + 1);
+		vsnprintf(buf, len + 1, fmt, ap);
 	}
 
-	cq_append(client->cl_wrbuf, r, len);
-	ev_io_start(client_loop, &client->cl_writable);
+	wr = xcalloc(1, sizeof(*wr));
 
-	if (r != buf)
-		free(r);
+	ubuf = uv_buf_init(buf, len);
+	wr->data = client;
+
+	uv_write(wr, (uv_stream_t *) client->cl_stream, &ubuf, 1, on_client_write_done);
 }
 
 void
@@ -512,16 +412,45 @@ va_list	ap;
 }
 
 static client_t *
-client_new(fd)
+client_new(stream)
+	uv_tcp_t	*stream;
 {
 client_t	*cl;
-	cl = bzalloc(ba_client);
-	cl->cl_fd = fd;
+
+	cl = xcalloc(1, sizeof(*cl));
+	cl->cl_stream = stream;
 	cl->cl_state = CS_WAIT_COMMAND;
 	cl->cl_artalloc = 16384;
 	cl->cl_article = xmalloc(cl->cl_artalloc);
 	cl->cl_article[0] = 0;
 	return cl;
+}
+
+static void 
+on_client_shutdown_done(req, status)
+	uv_shutdown_t	*req;
+{
+uv_tcp_t	*stream = (uv_tcp_t *) req->handle;
+client_t	*cl = stream->data;
+
+	free(req);
+
+	if (status) {
+		if (log_incoming_connections)
+			client_log(LOG_INFO, cl, "write error: %s",
+				   uv_strerror(status));
+	}
+
+	uv_close((uv_handle_t *) stream, on_client_close_done);
+}
+
+static void
+on_client_close_done(handle)
+	uv_handle_t	*handle;
+{
+client_t	*cl = handle->data;
+
+	client_destroy(cl);
 }
 
 void
@@ -531,19 +460,18 @@ client_close(cl, drain)
 	if (cl->cl_flags & CL_DEAD)
 		return;
 
-	if (drain && cq_len(cl->cl_wrbuf)) {
-		cl->cl_flags |= CL_DRAIN;
+	if (drain) {
+	uv_shutdown_t	*req = xcalloc(1, sizeof(*req));
 
-		ev_io_stop(client_loop, &cl->cl_readable);
-		cl->cl_flags &= ~CL_READABLE;
+		cl->cl_flags |= CL_DRAIN;
+		req->data = cl;
+
+		uv_shutdown(req, (uv_stream_t *) cl->cl_stream, on_client_shutdown_done);
 		return;
 	}
 
-	ev_io_stop(client_loop, &cl->cl_readable);
-	ev_io_stop(client_loop, &cl->cl_writable);
-
 	cl->cl_flags |= CL_DEAD;
-	SIMPLEQ_INSERT_TAIL(&client_dead_list, cl, cl_dead_list);
+	uv_close((uv_handle_t *) cl->cl_stream, on_client_close_done);
 }
 
 void
@@ -557,12 +485,33 @@ client_t	*client = udata;
 	}
 
 	pending_remove_client(client);
+	free(client->cl_stream);
 	free(client->cl_msgid);
 	free(client->cl_article);
 	free(client->cl_username);
 	free(client->cl_strname);
-	cq_free(client->cl_wrbuf);
 	cq_free(client->cl_rdbuf);
-	close(client->cl_fd);
-	bfree(ba_client, client);
+	free(client);
+}
+
+void
+client_pause(cl)
+	client_t	*cl;
+{
+	if (cl->cl_flags & CL_PAUSED)
+		return;
+
+	cl->cl_flags |= CL_PAUSED;
+	uv_read_stop((uv_stream_t *) cl->cl_stream);
+}
+
+void
+client_unpause(cl)
+	client_t	*cl;
+{
+	if (!(cl->cl_flags & CL_PAUSED))
+		return;
+
+	cl->cl_flags &= ~CL_PAUSED;
+	uv_read_start((uv_stream_t *) cl->cl_stream, uv_alloc, on_client_read);
 }

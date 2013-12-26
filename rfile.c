@@ -35,11 +35,10 @@ rfcheck(rf)
 				nts_log(LOG_ERR, "%s: cannot re-open: %s",
 					rf->rf_name, strerror(errno));
 			} else {
-				net_set_cloexec(fileno(nfile));
 				fclose(rf->rf_file);
 				rf->rf_file = nfile;
 				nts_log(LOG_INFO, "\"%s\": rotated",
-						rf->rf_name);
+					rf->rf_name);
 			}
 
 			stat(rf->rf_name, &rf->rf_stat);
@@ -78,8 +77,6 @@ rfile_t	*rf;
 
 	if ((f = fopen(path, mode)) == NULL)
 		return NULL;
-
-	net_set_cloexec(fileno(f));
 
 	rf = xcalloc(1, sizeof(*rf));
 	rf->rf_name = xstrdup(path);

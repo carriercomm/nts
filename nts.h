@@ -17,6 +17,8 @@
 #include	<stdarg.h>
 #include	<inttypes.h>
 
+#include	<uv.h>
+
 #include	"queue.h"
 #include	"setup.h"
 
@@ -71,8 +73,10 @@ extern int		 log_incoming_connections;
 extern char		*reader_handler;
 extern uint64_t		 stats_interval;
 extern uint64_t		 worker_threads;
-
-int		reader_handoff(int);
+extern char		*reader_user, *reader_group;
+extern uv_loop_t	*loop;
+extern char		*pid_file;
+extern char		*control_path;
 
 #ifndef HAVE_STRLCPY
 size_t strlcpy(char *, const char *, size_t);
@@ -273,5 +277,7 @@ extern int nts_debug_flags;
 
 #define	DEBUG(x)	(nts_debug_flags & (DEBUG_##x))
 #endif	/* NDEBUG */
+
+void	uv_alloc(uv_handle_t *, size_t, uv_buf_t *);
 
 #endif	/* !NTS_NTS_H */

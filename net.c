@@ -19,7 +19,7 @@
 #include	<errno.h>
 #include	<fcntl.h>
 
-#include	<ev.h>
+#include	<uv.h>
 
 #include	"setup.h"
 
@@ -32,7 +32,6 @@
 #include	"log.h"
 #include	"nts.h"
 #include	"charq.h"
-#include	"balloc.h"
 
 #define	NET_DEBUG	0
 
@@ -52,12 +51,12 @@ typedef struct fde {
 	net_err_handler		 fde_error_handler;
 
 	/* Read data */
-	ev_io			 fde_read_watcher;
+	uv_poll_t		 fde_read_watcher;
 	net_handler		 fde_read_handler;
 	charq_t			*fde_rbuf;
 
 	/* Write data */
-	ev_io			 fde_write_watcher;
+	uv_poll_t		 fde_write_watcher;
 	charq_t			*fde_wbuf;
 
 	/* Listener sockets */
@@ -70,8 +69,8 @@ typedef struct fde {
 
 typedef struct net_ssl_accept_ctx {
 	SSL			*sa_ssl;
-	ev_io			 sa_reader;
-	ev_io			 sa_writer;
+	uv_poll_t		 sa_reader;
+	uv_poll_t		 sa_writer;
 	int			 sa_fd;
 	int			 sa_nfd;
 	struct sockaddr_storage	 sa_addr;
@@ -90,31 +89,29 @@ typedef struct error_handler_data {
 	int	eh_what;
 } error_handler_data_t;
 
-static balloc_t	*ba_fde, *ba_soon, *ba_iw, *ba_ehd;
-
 static int	net_listen_ai(struct addrinfo *ai, SSL_CTX *, net_accepter accepter, int, void *udata);
 static void	net_accept(int, int, void *);
-static void	net_read_handler(struct ev_loop *, ev_io *, int);
-static void	net_write_handler(struct ev_loop *, ev_io *, int);
-static void	net_connect_handler(struct ev_loop *, ev_io *, int);
+static void	net_read_handler(uv_poll_t *, int, int);
+static void	net_write_handler(uv_poll_t *, int, int);
+static void	net_connect_handler(uv_poll_t *, int, int);
 static void	net_free(int fd);
 static void	net_close_impl(void *);
-static void	net_signal(struct ev_loop *, ev_signal *, int);
-static void	net_ssl_accept_handler(struct ev_loop *, ev_io *, int);
+static void	net_signal(uv_signal_t *, int);
+static void	net_ssl_accept_handler(uv_poll_t *, int, int);
 static void	net_call_error_handler(int, int, int);
 static void	net_call_read_handler(int);
 static void	net_call_write_handler(int);
 static void	net_call_tls_done_handler(int);
-static void	net_run_soon(struct ev_loop *, ev_prepare *w, int revents);
+static void	net_run_soon(uv_prepare_t *, int);
 static void	net_ssl_do_accept(int);
 static int	net_do_write(int);
 
-static struct ev_loop *loop;
+static struct uv_loop *loop;
 
 typedef struct soon {
 	net_cron_handler	 hdl;
 	void			*udata;
-	ev_idle			*w;
+	uv_idle_t		*w;
 	SIMPLEQ_ENTRY(soon)	 list;
 } soon_t;
 
@@ -122,16 +119,12 @@ static SIMPLEQ_HEAD(soon_list, soon) soon_list;
 
 fde_t	**fd_table;
 
-static	ev_prepare	soon_ev;
-static	ev_signal	sigint, sigterm;
+static	uv_prepare_t	soon_ev;
+static	uv_signal_t	sigint, sigterm;
 
 int
 net_init()
 {
-	ba_fde = balloc_new(sizeof(fde_t), 128, "fde_t");
-	ba_soon = balloc_new(sizeof(soon_t), 128, "soon_t");
-	ba_iw = balloc_new(sizeof(ev_idle), 128, "ev_idle");
-	ba_ehd = balloc_new(sizeof(error_handler_data_t), 128, "error_handler_data");
 	fd_table = xcalloc(getdtablesize(), sizeof(*fd_table));
 	SIMPLEQ_INIT(&soon_list);
 	loop = EV_DEFAULT;
@@ -200,12 +193,10 @@ fde_t	*fde;
 	fde->fde_rbuf = cq_new();
 	fde->fde_wbuf = cq_new();
 
-	ev_io_init(&fde->fde_write_watcher, net_write_handler, fd, EV_WRITE);
-	ev_set_priority(&fde->fde_write_watcher, prio);
-	ev_io_init(&fde->fde_read_watcher, net_read_handler, fd, EV_READ);
-	ev_set_priority(&fde->fde_read_watcher, prio);
-	ev_io_start(loop, &fde->fde_read_watcher);
-	return;
+	uv_poll_init(loop, &fde->fde_write_watcher, fd);
+	uv_poll_init(loop, &fde->fde_read_watcher, fd);
+
+	uv_poll_start(&fde->fde_read_watcher, net_read_handler, UV_READABLE);
 }
 
 static int
@@ -369,6 +360,12 @@ socklen_t		addrlen = sizeof(addr);
 		ctx->sa_nfd = nfd;
 		bcopy(&addr, &ctx->sa_addr, sizeof(addr));
 		ctx->sa_addrlen = addrlen;
+
+		uv_poll_init(loop, &ctx->sa_reader, nfd);
+		uv_poll_init(loop, &ctx->sa_writer, nfd);
+
+		ctx->sa_reader->data = ctx->sa_writer->data = ctx;
+
 		ev_io_init(&ctx->sa_reader, net_ssl_accept_handler, nfd, EV_READ);
 		ev_io_init(&ctx->sa_writer, net_ssl_accept_handler, nfd, EV_WRITE);
 
@@ -376,11 +373,13 @@ socklen_t		addrlen = sizeof(addr);
 		int	err;
 			switch (err = SSL_get_error(ctx->sa_ssl, ret)) {
 			case SSL_ERROR_WANT_READ:
-				ev_io_start(loop, &ctx->sa_reader);
+				uv_poll_start(&ctx->sa_reader, EV_READ, net_ssl_accept_handler);
 				return;
+
 			case SSL_ERROR_WANT_WRITE:
-				ev_io_start(loop, &ctx->sa_writer);
+				uv_poll_start(&ctx->sa_reader, EV_WRITE, net_ssl_accept_handler);
 				return;
+
 			default:
 				nts_log(LOG_WARNING, "SSL accept failed: %s",
 					ERR_error_string(err, NULL));
@@ -397,13 +396,16 @@ socklen_t		addrlen = sizeof(addr);
 }
 
 static void
-net_ssl_accept_handler(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_io		*w;
+net_ssl_accept_handler(handle, status, revents)
+	uv_poll_t	*handle;
 {
 int			 ret, err;
-net_ssl_accept_ctx_t	*ctx = w->data;
-	ev_io_stop(loop, w);
+net_ssl_accept_ctx_t	*ctx = handle->data;
+
+	if (revents & UV_READABLE)
+		uv_poll_stop(&ctx->sa_reader);
+	else
+		uv_poll_stop(&ctx->sa_writer);
 
 	if ((ret = SSL_accept(ctx->sa_ssl)) == 1) {
 		fd_table[ctx->sa_fd]->fde_accepter(ctx->sa_nfd, 
@@ -420,11 +422,14 @@ net_ssl_accept_ctx_t	*ctx = w->data;
 
 	switch (err = SSL_get_error(ctx->sa_ssl, ret)) {
 	case SSL_ERROR_WANT_READ:
-		ev_io_start(loop, &ctx->sa_reader);
+		uv_poll_start(&ctx->sa_reader, EV_READ, net_ssl_accept_handler);
 		break;
+
 	case SSL_ERROR_WANT_WRITE:
+		uv_poll_start(&ctx->sa_writer, EV_WRITE, net_ssl_accept_handler);
 		ev_io_start(loop, &ctx->sa_writer);
 		break;
+
 	default:
 		nts_log(LOG_WARNING, "SSL accept failed: %s",
 			ERR_error_string(err, NULL));
@@ -456,7 +461,7 @@ int	 ret;
 
 	if ((ret = SSL_accept(fde->fde_ssl)) == 1) {
 		fde->fde_flags &= ~FDE_SSL_ACCEPTING;
-		ev_io_start(loop, &fde->fde_read_watcher);
+		uv_poll_start(&fde->fde_read_watcher, EV_READ, net_read_handler);
 		cq_remove_start(fde->fde_rbuf, cq_len(fde->fde_rbuf));
 		net_call_tls_done_handler(fd);
 		return;
@@ -469,12 +474,13 @@ int	 ret;
 	int	err;
 		switch (err = SSL_get_error(fde->fde_ssl, ret)) {
 		case SSL_ERROR_WANT_READ:
-			ev_io_start(loop, &fde->fde_read_watcher);
-			ev_io_stop(loop, &fde->fde_write_watcher);
+			uv_poll_stop(&fde->fde_write_watcher);
+			uv_poll_start(&fde->fde_read_watcher, net_read_handler);
 			return;
+
 		case SSL_ERROR_WANT_WRITE:
-			ev_io_start(loop, &fde->fde_write_watcher);
-			ev_io_stop(loop, &fde->fde_read_watcher);
+			uv_poll_stop(&fde->fde_read_watcher);
+			uv_poll_start(&fde->fde_write_watcher, net_write_handler);
 			return;
 		default:
 			net_call_error_handler(fd, FDE_READ, EIO);
@@ -489,8 +495,8 @@ void
 net_pause(fd)
 {
 fde_t	*fde = fd_table[fd];
-	ev_io_stop(loop, &fde->fde_write_watcher);
-	ev_io_stop(loop, &fde->fde_read_watcher);
+	uv_poll_stop(&fde->fde_write_watcher);
+	uv_poll_stop(&fde->fde_read_watcher);
 	fde->fde_flags |= FDE_PAUSED;
 }
 
@@ -500,16 +506,16 @@ net_unpause(fd)
 fde_t	*fde = fd_table[fd];
 	fde->fde_flags &= ~FDE_PAUSED;
 	net_do_write(fd);
-	ev_io_start(loop, &fde->fde_read_watcher);
+
+	uv_poll_start(&fde->fde_read_watcher, EV_READ, net_read_handler);
 }
 
 static void
-net_read_handler(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_io		*w;
-	int		 revents;
+net_read_handler(handle, status, revents)
+	uv_poll_t	*handle;
 {
 fde_t	*fde = fd_table[w->fd];
+
 	if (fde->fde_flags & FDE_SSL_ACCEPTING) {
 		net_ssl_do_accept(w->fd);
 		return;
@@ -528,9 +534,11 @@ ssize_t	 n;
 	if (fde->fde_ssl) {
 	int		ret, err;
 	static char	rdbuf[8192];
+
 		if (fde->fde_flags & FDE_SSL_WRITE_WANTS_READ) {
 			fde->fde_flags &= ~FDE_SSL_WRITE_WANTS_READ;
-			ev_io_start(loop, &fde->fde_write_watcher);
+
+			uv_poll_start(&fde->fde_write_watcher, UV_READABLE, net_write_handler);
 		}
 
 		ret = SSL_read(fde->fde_ssl, rdbuf, sizeof(rdbuf));
@@ -541,8 +549,8 @@ ssize_t	 n;
 		}
 
 		if (ret == 0) {
-			ev_io_stop(loop, &fde->fde_write_watcher);
-			ev_io_stop(loop, &fde->fde_read_watcher);
+			uv_poll_stop(&fde->fde_write_watcher);
+			uv_poll_stop(&fde->fde_read_watcher);
 			fde->fde_flags |= FDE_ERROR;
 			errno = 0;
 			return -1;
@@ -554,14 +562,14 @@ ssize_t	 n;
 
 		case SSL_ERROR_WANT_WRITE:
 			fde->fde_flags |= FDE_SSL_READ_WANTS_WRITE;
-			ev_io_start(loop, &fde->fde_write_watcher);
+			uv_poll_start(&fde->fde_write_watcher, UV_WRITABLE, net_write_handler);
 			return 0;
 
 		default:
 			nts_log(LOG_WARNING, "SSL read failed: %s",
 				ERR_error_string(err, NULL));
-			ev_io_stop(loop, &fde->fde_write_watcher);
-			ev_io_stop(loop, &fde->fde_read_watcher);
+			uv_poll_stop(&fde->fde_write_watcher);
+			uv_poll_stop(&fde->fde_read_watcher);
 			fde->fde_flags |= FDE_ERROR;
 			errno = EIO;
 			return -1;
@@ -576,16 +584,16 @@ ssize_t	 n;
 			return 0;
 
 		DPRINTF(("net_read_some fd=%d n=-1 %s\n", fd, strerror(errno)));
-		ev_io_stop(loop, &fde->fde_write_watcher);
-		ev_io_stop(loop, &fde->fde_read_watcher);
+		uv_poll_stop(&fde->fde_write_watcher);
+		uv_poll_stop(&fde->fde_read_watcher);
 		fde->fde_flags |= FDE_ERROR;
 		return -1;
 	}
 
 	if (n == 0) {
 		DPRINTF(("net_read_some fd=%d n=0\n", fd));
-		ev_io_stop(loop, &fde->fde_write_watcher);
-		ev_io_stop(loop, &fde->fde_read_watcher);
+		uv_poll_stop(&fde->fde_write_watcher);
+		uv_poll_stop(&fde->fde_read_watcher);
 		fde->fde_flags |= FDE_ERROR;
 		errno = 0;
 		return -1;
@@ -638,8 +646,8 @@ ssize_t	 n;
 
 
 		if (n == 0) {
-			ev_io_stop(loop, &fde->fde_write_watcher);
-			ev_io_stop(loop, &fde->fde_read_watcher);
+			uv_poll_stop(&fde->fde_write_watcher);
+			uv_poll_stop(&fde->fde_read_watcher);
 
 			if (!(fde->fde_flags & FDE_ERROR)) {
 				fde->fde_flags |= FDE_ERROR;
@@ -661,8 +669,8 @@ ssize_t	 n;
 			default:
 				nts_log(LOG_WARNING, "SSL write failed: %s",
 					ERR_error_string(err, NULL));
-				ev_io_stop(loop, &fde->fde_write_watcher);
-				ev_io_stop(loop, &fde->fde_read_watcher);
+				uv_poll_stop(&fde->fde_write_watcher);
+				uv_poll_stop(&fde->fde_read_watcher);
 
 				if (!(fde->fde_flags & FDE_ERROR)) {
 					fde->fde_flags |= FDE_ERROR;
@@ -681,12 +689,12 @@ ssize_t	 n;
 
 	if ((n = cq_write(fde->fde_wbuf, fd)) == -1) {
 		if (errno == EAGAIN || errno == EWOULDBLOCK) {
-			ev_io_start(loop, &fde->fde_write_watcher);
+			uv_poll_start(&fde->fde_write_watcher, UV_WRITABLE, net_write_handler);
 			return 0;
 		}
 
-		ev_io_stop(loop, &fde->fde_read_watcher);
-		ev_io_stop(loop, &fde->fde_write_watcher);
+		uv_poll_stop(&fde->fde_write_watcher);
+		uv_poll_stop(&fde->fde_read_watcher);
 
 		if (!(fde->fde_flags & FDE_ERROR)) {
 			fde->fde_flags |= FDE_ERROR;
@@ -697,23 +705,22 @@ ssize_t	 n;
 	}
 
 	if (cq_len(fde->fde_wbuf) == 0) {
-		ev_io_stop(loop, &fde->fde_write_watcher);
+		uv_poll_stop(&fde->fde_write_watcher);
 		if (fde->fde_flags & FDE_DRAIN) {
 			fde->fde_flags |= FDE_DEAD;
 			net_soon(net_close_impl, (void *) (uintptr_t) fd);
 		}
 	} else
-		ev_io_start(loop, &fde->fde_write_watcher);
+		uv_poll_start(&fde->fde_write_watcher, UV_WRITABLE, net_write_handler);
 
 	return 0;
 }
 
 static void
-net_write_handler(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_io		*w;
-	int		 revents;
+net_write_handler(handle, status, revents)
+	uv_poll_t	*handle;
 {
+#if 0
 fde_t	*fde = fd_table[w->fd];
 
 	if (fde->fde_flags & FDE_SSL_ACCEPTING) {
@@ -729,6 +736,7 @@ fde_t	*fde = fd_table[w->fd];
 	DPRINTF(("net_write_handler fd=%d\n", w->fd));
 
 	net_do_write(w->fd);
+#endif
 }
 
 void
@@ -754,27 +762,30 @@ net_free(fd)
 {
 fde_t	*fde = fd_table[fd];
 	DPRINTF(("net_free fd=%d\n", fd));
-	ev_io_stop(loop, &fde->fde_read_watcher);
-	ev_io_stop(loop, &fde->fde_write_watcher);
+	uv_poll_stop(&fde->fde_write_watcher);
+	uv_poll_stop(&fde->fde_read_watcher);
 	cq_free(fde->fde_rbuf);
 	cq_free(fde->fde_wbuf);
 	if (fde->fde_ssl)
 		SSL_free(fde->fde_ssl);
 	close(fd);
-	bfree(ba_fde, fd_table[fd]);
+	free(fd_table[fd]);
 	fd_table[fd] = NULL;
 }
 
 int
 net_run(void)
 {
-	ev_prepare_init(&soon_ev, net_run_soon);
-	ev_prepare_start(loop, &soon_ev);
-	ev_signal_init(&sigint, net_signal, SIGINT);
-	ev_signal_start(loop, &sigint);
-	ev_signal_init(&sigterm, net_signal, SIGTERM);
-	ev_signal_start(loop, &sigterm);
-	ev_run(loop, 0);
+	uv_prepare_init(loop, &soon_ev);
+	uv_prepare_start(&soon_cb, net_run_soon);
+
+	uv_signal_init(loop, &sigint);
+	uv_signal_start(&sigint, net_signal, SIGINT);
+
+	uv_signal_init(loop, &sigterm);
+	uv_signal_start(&sigterm, net_signal, SIGTERM);
+
+	uv_run(loop, UV_RUN_DEFAULT);
 	return 0;
 }
 
@@ -846,10 +857,10 @@ net_close(fd)
 {
 fde_t	*fde = fd_table[fd];
 	DPRINTF(("net_close fd=%d\n", fd));
-	ev_io_stop(loop, &fde->fde_read_watcher);
+	uv_poll_stop(&fde->fde_read_watcher);
 
 	if (cq_len(fde->fde_wbuf) == 0 || (fde->fde_flags & FDE_ERROR)) {
-		ev_io_stop(loop, &fde->fde_write_watcher);
+		uv_poll_stop(&fde->fde_write_watcher);
 		DPRINTF(("fd is dead\n"));
 		fde->fde_flags |= FDE_DEAD;
 		net_soon(net_close_impl, (void *) (uintptr_t) fd);
@@ -861,17 +872,16 @@ fde_t	*fde = fd_table[fd];
 
 typedef struct cron {
 	int			 c_freq;
-	ev_periodic		 c_p;
+	uv_timer_t		 c_p;
 	net_cron_handler	 c_hdl;
 	void			*c_udata;
 } cron_t;
 
 static void
-cron_handler(loop, w, events)
-	struct ev_loop	*loop;
-	ev_periodic	*w;
+cron_handler(handle, status)
+	uv_timer_t	*handle;
 {
-cron_t	*cron = w->data;
+cron_t	*cron = handle->data;
 	cron->c_hdl(cron->c_udata);
 }
 
@@ -885,23 +895,22 @@ cron_t	*cron = xcalloc(1, sizeof(*cron));
 	cron->c_freq = freq;
 	cron->c_udata = udata;
 	cron->c_hdl = hdl;
-	ev_periodic_init(&cron->c_p, cron_handler, 0, cron->c_freq, 0);
+
+	uv_timer_init(loop, &cron->c_p);
+	uv_timer_start(&cron->c_p, cron_handler, freq * 1000, freq * 1000);
 	cron->c_p.data = cron;
-	ev_periodic_start(loop, &cron->c_p);
 }
 
 static void
-net_run_soon(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_prepare	*w;
-	int		 revents;
+net_run_soon(handle, status)
+	uv_prepare_t	*handle;
 {
 soon_t	*soon;
 
 	while (soon = SIMPLEQ_FIRST(&soon_list)) {
 		soon->hdl(soon->udata);
 		SIMPLEQ_REMOVE_HEAD(&soon_list, list);
-		bfree(ba_soon, soon);
+		free(soon);
 	}
 }
 
@@ -911,7 +920,7 @@ net_soon(hdl, udata)
 	void			*udata;
 {
 soon_t	*soon;
-	soon = balloc(ba_soon);
+	soon = xcalloc(1, sizeof(*soon));
 	soon->hdl = hdl;
 	soon->udata = udata;
 	SIMPLEQ_INSERT_TAIL(&soon_list, soon, list);
@@ -926,7 +935,7 @@ fde_t			*fde = fd_table[eh->eh_fd];
 
 	if ((fde->fde_flags & (FDE_ERROR | FDE_DEAD)) &&
 	    (eh->eh_type != F_ERROR)) {
-		bfree(ba_ehd, eh);
+		free(eh);
 		return;
 	}
 
@@ -950,7 +959,7 @@ fde_t			*fde = fd_table[eh->eh_fd];
 		break;
 	}
 
-	bfree(ba_ehd, eh);
+	free(eh);
 }
 
 void
@@ -1055,29 +1064,27 @@ fde_t	*fde;
 	}
 
 	if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINPROGRESS) {
-		bfree(ba_fde, fd_table[fd]);
+		free(fd_table[fd]);
 		fd_table[fd] = NULL;
 		close(fd);
 		errhdl(-1, FDE_CONNECT, errno, udata);
 		return;
 	}
 
-	ev_io_init(&fde->fde_write_watcher, net_connect_handler, fd, EV_WRITE);
-	ev_set_priority(&fde->fde_write_watcher, prio);
-	fde->fde_prio = prio;
-	ev_io_start(loop, &fde->fde_write_watcher);
+	fde->fde_write_handler.data = fde;
+	uv_poll_init(loop, &fde->fde_write_watcher, fd);
+	uv_poll_start(&fde->fde_write_watcher, UV_WRITABLE, net_connect_handler);
 }
 
 static void
-net_connect_handler(loop, w, events)
-	struct ev_loop	*loop;
-	ev_io		*w;
+net_connect_handler(handle, status, revents)
+	uv_poll_t	*handle;
 {
-fde_t		*fde = fd_table[w->fd];
+fde_t		*fde = w->data;
 int		 err;
 socklen_t	 errlen = sizeof(err);
 
-	ev_io_stop(loop, &fde->fde_write_watcher);
+	uv_poll_stop(&fde->fde_write_watcher);
 
 	if (getsockopt(w->fd, SOL_SOCKET, SO_ERROR, &err, &errlen) == -1) {
 		close(w->fd);
@@ -1094,6 +1101,8 @@ socklen_t	 errlen = sizeof(err);
 	fde->fde_rbuf = cq_new();
 	fde->fde_wbuf = cq_new();
 
+#if 0
+	uv_poll_init(loop, &fde->fde_write_watcher, fde->
 	ev_io_init(&fde->fde_write_watcher, net_write_handler, w->fd, EV_WRITE);
 	ev_set_priority(&fde->fde_write_watcher, fde->fde_prio);
 	ev_io_init(&fde->fde_read_watcher, net_read_handler, w->fd, EV_READ);
@@ -1101,12 +1110,12 @@ socklen_t	 errlen = sizeof(err);
 	ev_io_start(loop, &fde->fde_read_watcher);
 
 	fde->fde_connect_handler(w->fd, FDE_CONNECT, fde->fde_udata);
+#endif
 }
 
 static void
-net_signal(loop, w, events)
-	struct ev_loop	*loop;
-	ev_signal	*w;
+net_signal(handle, signum)
+	uv_signal_t	*handle;
 {
 	nts_shutdown("received signal");
 }
@@ -1115,14 +1124,14 @@ void
 net_io_stop(fd)
 {
 fde_t	*fde = fd_table[fd];
-	ev_io_stop(loop, &fde->fde_read_watcher);
+	uv_poll_stop(&fde->fde_read_watcher);
 }
 
 void
 net_io_start(fd)
 {
 fde_t	*fde = fd_table[fd];
-	ev_io_start(loop, &fde->fde_read_watcher);
+	uv_poll_start(&fde->fde_read_watcher, UV_READABLE, net_read_handler);
 }
 
 void

@@ -27,12 +27,8 @@
 #include	"log.h"
 #include	"net.h"
 #include	"spool.h"
-#include	"balloc.h"
-#include	"dns.h"
 #include	"config.h"
 #include	"hash.h"
-
-static balloc_t	 *ba_fc;
 
 static feeder_t	*feeder_new(server_t *);
 static void	 feeder_log(int sev, feeder_t *fe, char const *fmt, ...)
@@ -41,10 +37,14 @@ static void	 feeder_vlog(int sev, feeder_t *fe, char const *fmt, va_list);
 static void	 feeder_load(feeder_t *, int deferred);
 
 static fconn_t	*fconn_new(feeder_t *);
+static void	 on_fconn_connect_done(uv_connect_t *, int);
+static void	 on_fconn_read(uv_stream_t *, ssize_t, const uv_buf_t *);
+static void	 on_fconn_dns_done(uv_getaddrinfo_t *, int, struct addrinfo *);
+static void	 on_fconn_write_done(uv_write_t *, int);
+static void	 on_fconn_shutdown_done(uv_shutdown_t *, int);
+static void	 on_fconn_close_done(uv_handle_t *);
+
 static void	 fconn_connect(fconn_t *);
-static void	 fconn_connect_done(int fd, int what, void *udata);
-static void      fconn_err(int fd, int what, int err, void *udata);
-static void	 fconn_read(int fd, int what, void *udata);
 static void	 fconn_puts(fconn_t *, char const *text);
 static void	 fconn_printf(fconn_t *, char const *fmt, ...) attr_printf(2, 3);
 static void	 fconn_vprintf(fconn_t *, char const *fmt, va_list);
@@ -53,9 +53,9 @@ static void	 fconn_log(int sev, fconn_t *fe, char const *fmt, ...)
 static void	 fconn_vlog(int sev, fconn_t *fe, char const *fmt, va_list);
 static void	 fconn_check(fconn_t *fe, qent_t *);
 static void	 fconn_takethis(fconn_t *fe, qent_t *);
-static void	 fconn_close(fconn_t *);
+static void	 fconn_close(fconn_t *, int);
+static void	 fconn_destroy(fconn_t *);
 static void	 fconn_adp_check(fconn_t *, int accepted);
-static void      fconn_dns_done(char const *name, int, address_list_t *, void *);
 
 static int	 fc_wait_greeting(fconn_t *, char *);
 static int	 fc_sent_capabilities(fconn_t *, char *);
@@ -77,7 +77,6 @@ static int (*fconn_handlers[]) (fconn_t *, char *) = {
 int
 feeder_init()
 {
-	ba_fc = balloc_new(sizeof(fconn_t), 64, "fconn");
 	return 0;
 }
 
@@ -85,9 +84,9 @@ int
 feeder_run()
 {
 server_t	*se;
-	SLIST_FOREACH(se, &servers, se_list) {
+
+	SLIST_FOREACH(se, &servers, se_list)
 		se->se_feeder = feeder_new(se);
-	}
 
 	return 0;
 }
@@ -126,28 +125,47 @@ char		 host[NI_MAXHOST], serv[NI_MAXSERV];
 int		 ret;
 feeder_t	*fe = fc->fc_feeder;
 struct sockaddr	*bind = NULL;
-socklen_t	 bindlen = 0;
+uv_connect_t	*req;
 
         if (!fc->fc_addrs) {
+	uv_getaddrinfo_t	*req;
+	struct addrinfo		 hints;
+
+		bzero(&hints, sizeof(hints));
+		hints.ai_family = PF_UNSPEC;
+		hints.ai_socktype = SOCK_STREAM;
+
+		req = xcalloc(1, sizeof(*req));
+		req->data = fc;
+
                 fc->fc_state = FS_DNS;
-                dns_resolve(fe->fe_server->se_send_to, fe->fe_server->se_port,
-                            DNS_TYPE_ANY, fconn_dns_done, fc);
+		
+		if (ret = uv_getaddrinfo(loop, req, on_fconn_dns_done, 
+					 fe->fe_server->se_send_to,
+					 fe->fe_server->se_port,
+					 &hints)) {
+			nts_log(LOG_ERR, "feeder: %s: uv_getaddrinfo: %s",
+				fe->fe_server->se_name, uv_strerror(ret));
+			time(&fe->fe_server->se_feeder_last_fail);
+			fconn_destroy(fc);
+			free(req);
+		}
                 return;
         }
 
 	if (!fc->fc_cur_addr)
-		fc->fc_cur_addr = SIMPLEQ_FIRST(fc->fc_addrs);
+		fc->fc_cur_addr = fc->fc_addrs;
 
 	fc->fc_state = FS_CONNECT;
 
-        if (ret = getnameinfo((struct sockaddr *) &fc->fc_cur_addr->ad_addr,
-                        fc->fc_cur_addr->ad_len,
+        if (ret = getnameinfo((struct sockaddr *) fc->fc_cur_addr->ai_addr,
+                        fc->fc_cur_addr->ai_addrlen,
                         host, sizeof(host), serv, sizeof(serv),
                         NI_NUMERICHOST | NI_NUMERICSERV)) {
                 nts_log(LOG_WARNING, "feeder: %s: getnameinfo failed: %s",
                         fe->fe_server->se_name, gai_strerror(ret));
                 time(&fe->fe_server->se_feeder_last_fail);
-                fconn_close(fc);
+                fconn_destroy(fc);
                 return;
         }
 
@@ -155,75 +173,117 @@ socklen_t	 bindlen = 0;
 	free(fc->fc_strname);
 	fc->fc_strname = xstrdup(strname);
 
-        if (fc->fc_cur_addr->ad_addr.ss_family == AF_INET &&
+        if (fc->fc_cur_addr->ai_family == AF_INET &&
             fe->fe_server->se_bind_v4.sin_family != 0) {
                 bind = (struct sockaddr *) &fe->fe_server->se_bind_v4;
-                bindlen = sizeof(fe->fe_server->se_bind_v4);
-        } else if (fc->fc_cur_addr->ad_addr.ss_family == AF_INET6 &&
+        } else if (fc->fc_cur_addr->ai_family == AF_INET6 &&
             fe->fe_server->se_bind_v6.sin6_family != 0) {
                 bind = (struct sockaddr *) &fe->fe_server->se_bind_v6;
-                bindlen = sizeof(fe->fe_server->se_bind_v6);
         }
 
-        net_connect(NET_DEFPRIO,
-                        (struct sockaddr *) &fc->fc_cur_addr->ad_addr,
-                        fc->fc_cur_addr->ad_len,
-                        bind, bindlen,
-                        fconn_connect_done,
-                        fconn_err,
-                        fconn_read,
-                        fc);
+	if (ret = uv_tcp_init(loop, &fc->fc_stream)) {
+		fconn_log(LOG_ERR, fc, "uv_tcp_init: %s", uv_strerror(ret));
+		return;
+	}
+
+	fc->fc_stream.data = fc;
+
+	if (ret = uv_tcp_nodelay(&fc->fc_stream, 1)) {
+		fconn_log(LOG_ERR, fc, "uv_tcp_nodelay: %s", uv_strerror(ret));
+		return;
+	}
+
+	if (bind) {
+		if (ret = uv_tcp_bind(&fc->fc_stream, bind)) {
+			fconn_log(LOG_ERR, fc, "uv_tcp_bind: %s", uv_strerror(ret));
+			fconn_destroy(fc);
+			return;
+		}
+	}
+
+	req = xcalloc(1, sizeof(*req));
+	req->data = fc;
+	if (ret = uv_tcp_connect(req, &fc->fc_stream, fc->fc_cur_addr->ai_addr,
+				 on_fconn_connect_done)) {
+		fconn_log(LOG_ERR, fc, "uv_tcp_connect: %s", uv_strerror(ret));
+		fconn_destroy(fc);
+		return;
+	}
 
 #if 0
 	if (cf->log_connections)
-#endif
 		fconn_log(LOG_INFO, fc, "connected");
+#endif
 
+	fc->fc_cur_addr = fc->fc_cur_addr->ai_next;
 	fc->fc_state = FS_WAIT_GREETING;
 	time(&fc->fc_last_used);
 	return;
 }
 
 static void
-fconn_connect_done(fd, what, udata)
-        void    *udata;
+on_fconn_connect_done(req, status)
+	uv_connect_t	*req;
 {
-fconn_t		*fc = udata;
-feeder_t	*fe = fc->fc_feeder;
-int              one = 1;
+fconn_t		*fc = req->data;
 
-        if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) == -1) {
-                fconn_log(LOG_ERR, fc, "setsockopt(TCP_NODELAY): %s",
-                        strerror(errno));
-                time(&fe->fe_server->se_feeder_last_fail);
-                fconn_close(fc);
-                return;
-        }
+	if (status) {
+		fconn_log(LOG_INFO, fc, "connect: %s", uv_strerror(status));
+
+		if ((fc->fc_cur_addr = fc->fc_cur_addr->ai_next) == NULL) {
+			fconn_log(LOG_INFO, fc, "out of addresses");
+			time(&fc->fc_feeder->fe_last_fail);
+			fconn_destroy(fc);
+			return;
+		}
+
+		fconn_connect(fc);
+		return;
+	}
 
         fconn_log(LOG_INFO, fc, "connected");
 
-        fc->fc_fd = fd;
         fc->fc_state = FS_WAIT_GREETING;
         time(&fc->fc_last_used);
+
+	uv_read_start((uv_stream_t *) &fc->fc_stream, uv_alloc,
+		      on_fconn_read);
 }
 
 /*
  * New data is available to read on a feeder connection.
  */
 static void
-fconn_read(fd, what, udata)
-	void	*udata;
+on_fconn_read(stream, nread, buf)
+	uv_stream_t	*stream;
+	ssize_t		 nread;
+	const uv_buf_t	*buf;
 {
-fconn_t		*fc = udata;
+fconn_t		*fc = stream->data;
 feeder_t	*fe = fc->fc_feeder;
 char		*line;
-int		 n;
+
+	if (nread == 0) {
+		free(buf->base);
+		return;
+	}
+
+	if (nread < 0) {
+		fconn_log(LOG_INFO, fc, "read error: %s",
+			  uv_strerror(nread));
+		time(&fc->fc_feeder->fe_last_fail);
+		fconn_close(fc, 0);
+		return;
+	}
+
+	cq_append(fc->fc_rdbuf, buf->base, buf->len);
+	free(buf->base);
 
 	/*
 	 * Read lines from the connection until there are none left, or an
 	 * error occurs.
 	 */
-	while ((n = net_readline(fd, &line)) == 1) {
+	while (line = cq_read_line(fc->fc_rdbuf)) {
 		/*
 		 * Ignore empty lines -- altough perhaps we should close the
 		 * connection here, as there shouldn't be any.
@@ -250,6 +310,7 @@ int		 n;
 			time(&fe->fe_last_fail);
 			free(line);
 			line = NULL;
+			fconn_close(fc, 0);
 			return;
 		}
 
@@ -263,20 +324,6 @@ int		 n;
 		if (fc->fc_flags & FC_DEAD)
 			return;
 	}
-
-	/*
-	 * Close the connection if an error occurred reading data.  Update the
-	 * last fail time so we don't reconnect too soon.
-	 */
-	if (n == -1) {
-#if 0
-		if (cf->log_connections)
-#endif
-			fconn_log(LOG_INFO, fc, "read error: %s", errno ? strerror(errno) : "EOF");
-		time(&fc->fc_feeder->fe_last_fail);
-		return;
-	}
-	return;
 }
 
 /******
@@ -333,8 +380,7 @@ char	*resp;
 #if 0
 	if (cf->log_connections)
 #endif
-		fconn_log(LOG_INFO, fc, "running: %s mode",
-			fc->fc_mode == FM_STREAM ? "streaming" : "IHAVE");
+		fconn_log(LOG_INFO, fc, "running: streaming mode");
 	fc->fc_state = FS_RUNNING;
 	feeder_notify(fc->fc_feeder);
 
@@ -587,24 +633,42 @@ fconn_vprintf(fc, fmt, ap)
 	char const	*fmt;
 	va_list		 ap;
 {
-char	 buf[8192];
-char	*r = buf;
-int	 len;
+char            *buf;
+int              len;
+uv_write_t      *wr;
+uv_buf_t         ubuf;
 
-	/*
-	 * Try to write it into a static buffer on the stack to avoid a
-	 * malloc().  If it's too large, allocate space.
-	 */
-	len = vsnprintf(buf, sizeof(buf), fmt, ap);
-	if ((unsigned int) len >= sizeof (buf)) {
-		r = (char *) xmalloc(len + 1);
-		vsnprintf(r, len + 1, fmt, ap);
+#define PRINTF_BUFSZ    1024
+
+	buf = malloc(PRINTF_BUFSZ);
+	len = vsnprintf(buf, PRINTF_BUFSZ, fmt, ap);
+	if ((unsigned int) len >= PRINTF_BUFSZ) {
+		buf = xrealloc(buf, len + 1);
+		vsnprintf(buf, len + 1, fmt, ap);
 	}
 
-	net_write(fc->fc_fd, r, len);
+	wr = xcalloc(1, sizeof(*wr));
 
-	if (r != buf)
-		free(r);
+	ubuf = uv_buf_init(buf, len);
+	wr->data = fc;
+
+	uv_write(wr, (uv_stream_t *) &fc->fc_stream, &ubuf, 1, on_fconn_write_done);
+}
+
+static void
+on_fconn_write_done(wr, status)
+	uv_write_t	*wr;
+{
+fconn_t	*fc = wr->data;
+
+	free(wr->bufs[0].base);
+	free(wr);
+
+	if (status == 0)
+		return;
+
+	fconn_log(LOG_INFO, fc, "write error: %s", uv_strerror(status));
+	fconn_close(fc, 0);
 }
 
 /*
@@ -616,7 +680,14 @@ fconn_puts(fc, text)
 	fconn_t		*fc;
 	char const	*text;
 {
-	net_write(fc->fc_fd, text, strlen(text));
+uv_write_t	*wr;
+uv_buf_t         ubuf;
+	wr = xcalloc(1, sizeof(*wr));
+
+	ubuf = uv_buf_init(xstrdup(text), strlen(text));
+	wr->data = fc;
+
+	uv_write(wr, (uv_stream_t *) &fc->fc_stream, &ubuf, 1, on_fconn_write_done);
 }
 
 /*
@@ -723,9 +794,6 @@ fconn_check(fc, qe)
 	fconn_t	*fc;
 	qent_t	*qe;
 {
-char	buf[512];
-int	len;
-
 	/*
 	 * If this article has already been offered, don't offer it
 	 * again.  Can sometimes happen with a slow server when
@@ -755,8 +823,7 @@ int	len;
 	qe->qe_cmd = QE_CHECK;
 	TAILQ_INSERT_TAIL(&fc->fc_cq, qe, qe_list);
 
-	len = snprintf(buf, sizeof(buf), "CHECK %s\r\n", qe->qe_msgid);
-	net_write(fc->fc_fd, buf, len);
+	fconn_printf(fc, "CHECK %s\r\n", qe->qe_msgid);
 	++fc->fc_ncq;
 }
 
@@ -941,13 +1008,16 @@ printf("[%s] loaded %d articles from %s\n", fe->server->name,
 }
 
 static void
-fconn_close(fc)
+fconn_close(fc, drain)
 	fconn_t	*fc;
 {
 hash_table_t	*pending = fc->fc_feeder->fe_pending;
 hash_item_t	*ie, *next;
 size_t		 i;
 qent_t		*qe;
+
+	if (fc->fc_flags & (FC_DRAIN | FC_DEAD))
+		return;
 
 	if (!TAILQ_EMPTY(&fc->fc_cq)) {
 		bzero(&fc->fc_feeder->fe_server->se_pos,
@@ -971,11 +1041,47 @@ qent_t		*qe;
 
 	TAILQ_REMOVE(&fc->fc_feeder->fe_conns, fc, fc_list);
 
-	alist_free(fc->fc_addrs);
+	uv_freeaddrinfo(fc->fc_addrs);
 
-	net_close(fc->fc_fd);
+	if (drain) {
+	uv_shutdown_t   *req = xcalloc(1, sizeof(*req));
+
+		req->data = fc;
+		fc->fc_flags |= FC_DRAIN;
+		uv_shutdown(req, (uv_stream_t *) &fc->fc_stream, on_fconn_shutdown_done);
+		return;
+	}
+
+	fc->fc_flags |= FC_DEAD;
+	uv_close((uv_handle_t *) &fc->fc_stream, on_fconn_close_done);
+}
+
+static void
+on_fconn_shutdown_done(req, status)
+	uv_shutdown_t	*req;
+{
+fconn_t	*fc = req->data;
+	free(req);
+	uv_close((uv_handle_t *) &fc->fc_stream, on_fconn_close_done);
+};
+
+static void
+on_fconn_close_done(handle)
+	uv_handle_t	*handle;
+{
+fconn_t	*fc = handle->data;
+	fconn_destroy(fc);
+}
+
+static void
+fconn_destroy(fc)
+	fconn_t	*fc;
+{
+	if (fc->fc_addrs)
+		uv_freeaddrinfo(fc->fc_addrs);
+
 	free(fc->fc_strname);
-	bfree(ba_fc, fc);
+	free(fc);
 }
 
 static void
@@ -1011,7 +1117,7 @@ fconn_new(fe)
 	feeder_t	*fe;
 {
 fconn_t	*fc;
-	fc = bzalloc(ba_fc);
+	fc = xcalloc(1, sizeof(*fc));
 	fc->fc_feeder = fe;
 	TAILQ_INIT(&fc->fc_cq);
 
@@ -1026,45 +1132,22 @@ feeder_notify(fe)
 }
 
 static void
-fconn_dns_done(name, err, alist, udata)
-        char const      *name;
-        address_list_t  *alist;
-        void            *udata;
+on_fconn_dns_done(req, err, res)
+	uv_getaddrinfo_t	*req;
+	struct addrinfo		*res;
 {
-fconn_t		*fc = udata;
+fconn_t		*fc = req->data;
 feeder_t        *fe = fc->fc_feeder;
 
         if (err) {
                 nts_log(LOG_ERR, "feeder: %s: cannot resolve: %s",
                         fe->fe_server->se_name,
-                        dns_strerror(err));
+                        uv_strerror(err));
                 time(&fe->fe_server->se_feeder_last_fail);
-                fconn_close(fc);
+                fconn_destroy(fc);
                 return;
         }
 
-        fc->fc_addrs = alist;
+	fc->fc_addrs = res;
         fconn_connect(fc);
-}
-
-static void
-fconn_err(fd, what, err, udata)
-	void	*udata;
-{
-fconn_t		*fc = udata;
-feeder_t	*fe = fc->fc_feeder;
-
-	if (fc->fc_fd == 0) {
-		fconn_log(LOG_INFO, fc, "connect: %s", strerror(err));
-		if (SIMPLEQ_NEXT(fc->fc_cur_addr, ad_list) == NULL)
-			fconn_log(LOG_INFO, fc, "out of addresses");
-		else {
-			fconn_connect(fc);
-			return;
-		}
-	} else
-		fconn_log(LOG_INFO, fc, "%s", err ? strerror(err) : "EOF");
-
-	time(&fe->fe_server->se_feeder_last_fail);
-	fconn_close(fc);
 }

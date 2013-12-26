@@ -30,13 +30,13 @@ LIBS		= @LIBS@
 YACC		= @YACC@
 LEX		= @LEX@
 
-SRCS		= nts.c		config.c	net.c		client.c	\
+SRCS		= nts.c		config.c	ctl.c		client.c	\
 		  server.c	spool.c		log.c		article.c	\
 		  history.c	database.c	hash.c				\
 		  crc.c		wildmat.c	filter.c	feeder.c	\
-		  charq.c	rfile.c		balloc.c	auth.c		\
-		  crypt.c	strlcpy.c	thread.c	emp.c		\
-		  dns.c		base64.c					\
+		  charq.c	rfile.c		auth.c				\
+		  crypt.c	strlcpy.c	emp.c				\
+		  base64.c							\
 		  client_authinfo.c	client_mode.c	client_listen.c		\
 		  client_pending.c	client_reader.c	client_capab.c		\
 		  client_check.c	client_ihave.c	client_help.c		\

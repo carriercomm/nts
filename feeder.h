@@ -38,9 +38,10 @@ struct	feeder;
 
 #define	FC_DEAD		0x1
 #define	FC_FULL		0x2
+#define	FC_DRAIN	0x4
 
 typedef struct fconn {
-	int			 fc_fd;
+	uv_tcp_t		 fc_stream;
 	struct feeder		*fc_feeder;
 	char			*fc_strname;
 	fconn_state_t		 fc_state;
@@ -48,9 +49,10 @@ typedef struct fconn {
 	time_t			 fc_last_used;
 	int			 fc_ncq;
 	sendq_t			 fc_cq;
-	address_t		*fc_cur_addr;
-	address_list_t		*fc_addrs;
+	struct addrinfo		*fc_addrs,
+				*fc_cur_addr;
 	int			 fc_flags;
+	charq_t			*fc_rdbuf;
 	TAILQ_ENTRY(fconn)	 fc_list;
 } fconn_t;
 

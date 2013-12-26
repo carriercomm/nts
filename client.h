@@ -1,13 +1,12 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
 /* 
- * Copyright (c) 2011 River Tarnell.
+ * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
  * including commercial applications, and to alter it and redistribute it
  * freely. This software is provided 'as-is', without any express or implied
  * warranty.
  */
-/* $Header: /cvsroot/nts/client.h,v 1.9 2012/01/10 17:14:13 river Exp $ */
 
 #ifndef	NTS_CLIENT_H
 #define	NTS_CLIENT_H
@@ -18,6 +17,7 @@
 #include	<stdlib.h>
 
 #include	<ev.h>
+#include	<uv.h>
 
 #include	"setup.h"
 
@@ -56,8 +56,8 @@ typedef enum {
 } ssl_type_t;
 
 typedef struct listener {
-	int		 li_fd;
-	ev_io		 li_event;
+	uv_tcp_t	*li_uv;
+	int		 li_nuv;
 	char		*li_address;
 	struct listener	*li_next;
 #ifdef HAVE_OPENSSL
@@ -70,7 +70,7 @@ typedef struct listener {
 } listener_t;
 
 typedef struct client {
-	int		 cl_fd;
+	uv_tcp_t	*cl_stream;
 	struct server	*cl_server;
 	client_state_t	 cl_state;
 	char		*cl_msgid;
@@ -86,10 +86,6 @@ typedef struct client {
 	int		 cl_flags;
 	listener_t	*cl_listener;
 
-	ev_io		 cl_readable;
-	ev_io		 cl_writable;
-
-	charq_t		*cl_wrbuf;
 	charq_t		*cl_rdbuf;
 
 #ifdef HAVE_OPENSSL
@@ -97,9 +93,6 @@ typedef struct client {
 #endif
 
 	SIMPLEQ_ENTRY(client)	cl_list;
-	SIMPLEQ_ENTRY(client)	cl_read_list;
-	SIMPLEQ_ENTRY(client)	cl_write_list;
-	SIMPLEQ_ENTRY(client)	cl_dead_list;
 } client_t;
 
 typedef SIMPLEQ_HEAD(client_list, client) client_list_t;
@@ -119,7 +112,7 @@ void	 client_log(int sev, client_t *, char const *, ...)
 extern	config_schema_stanza_t listen_stanza;
 int	client_listen(void);
 
-void	 client_accept(int, struct sockaddr *, socklen_t, SSL *, listener_t *);
+void	 client_accept(uv_tcp_t *, SSL *, listener_t *);
 void	 client_close(client_t *, int);
 void	 client_destroy(void *);
 
@@ -130,10 +123,15 @@ void	 pending_remove(char const *msgid);
 void	 pending_remove_client(client_t *);
 
 void	 client_reader(client_t *);
+int	 client_reader_init(void);
+void	 reader_handoff(uv_tcp_t *);
 
-extern struct ev_loop	*client_loop;
-extern ev_async		 reply_ev;
-void	 client_do_replies(struct ev_loop *, ev_async *, int);
+void	 client_pause(client_t *);
+void	 client_unpause(client_t *);
+
+extern uv_loop_t	*client_loop;
+extern uv_async_t	 reply_ev;
+void	 client_do_replies(uv_async_t *, int);
 
 /*
  * Client command handlers.

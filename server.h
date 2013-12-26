@@ -20,7 +20,6 @@
 #include	"database.h"
 #include	"spool.h"
 #include	"net.h"
-#include	"balloc.h"
 #include	"client.h"
 
 struct feeder;
@@ -135,8 +134,6 @@ typedef struct server {
 
 typedef SLIST_HEAD(server_list, server) server_list_t;
 extern server_list_t servers;
-
-extern balloc_t	*ba_sbe;
 
 int		 server_init(void);
 int		 server_run(void);

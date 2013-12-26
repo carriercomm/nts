@@ -90,17 +90,18 @@ typedef struct spool_file {
 static spool_file_t	*spool_files;
 static size_t		 spool_base;
 static int		 spool_cur_file;
+static uv_timer_t	 spool_timer;
 
 #define	SPOOL_HDR_SIZE	(4 + 4 + 1 + 4 + 8 + 8 + 8 + 4)
 #define	SPOOL_MAGIC	0x4E53504C	/* NSPL */
 #define	SPOOL_MAGIC_EOS	0x4E454E44	/* NEND */
 
-static void	spool_write_size(void *);
 static void	spool_verify(spool_file_t *);
 static void	spool_file_open(spool_id_t, int create);
 static void	spool_file_close(spool_id_t, int delete);
 static ssize_t	spool_read_header(spool_file_t *, spool_offset_t, spool_header_t *);
 static void	spool_write_eos(spool_file_t *, spool_offset_t);
+static void	spool_write_size(uv_timer_t *, int);
 
 int
 spool_init()
@@ -201,8 +202,10 @@ struct dirent	*de;
 		spool_file_open(0, 1);
 		spool_cur_file = 0;
 	}
-	spool_write_size(NULL);
-	net_cron(10, spool_write_size, NULL);
+	spool_write_size(NULL, 0);
+
+	uv_timer_init(loop, &spool_timer);
+	uv_timer_start(&spool_timer, spool_write_size, 10 * 1000, 10 * 1000);
 
 	return 0;
 }
@@ -226,7 +229,7 @@ unsigned char	*data;
 unsigned long	 datalen;
 
 	if (sf->sf_size + artlen + SPOOL_HDR_SIZE*2 >= sf->sf_dsz) {
-		spool_write_size(NULL);
+		spool_write_size(NULL, 0);
 
 		/* Spool file is full, rotate (if necessary) and open another one. */
 		if ((spool_cur_file + 1) == spool_max_files) {
@@ -466,8 +469,8 @@ size_t		 artloc;
 }
 
 static void
-spool_write_size(udata)
-	void	*udata;
+spool_write_size(timer, status)
+	uv_timer_t	*timer;
 {
 spool_file_t	*sf = &spool_files[spool_cur_file];
 
@@ -606,7 +609,7 @@ error:
 void
 spool_shutdown()
 {
-	spool_write_size(NULL);
+	spool_write_size(NULL, 0);
 }
 
 static void

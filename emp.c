@@ -21,7 +21,6 @@
 #include	"nts.h"
 #include	"hash.h"
 #include	"crc.h"
-#include	"thread.h"
 
 static void	emp_set_decay(conf_stanza_t *, conf_option_t *, void *, void *);
 static void	emp_set_score_limit(conf_stanza_t *, conf_option_t *, void *, void *);
@@ -81,11 +80,11 @@ static DB	*phl_last_decayed_db;
 static int	 phl_get_last_decayed(DB *, DBT const *, DBT const *, DBT *);
 static int	 phl_compare_last_decayed(DB *, DBT const *, DBT const *);
 
-static void		 start_emp_clean(struct ev_loop *, ev_periodic *, int);
-static void		*run_emp_clean(void *);
-static void		 emp_clean_done(void *);
+static void		 start_emp_clean(uv_timer_t *, int);
+static void		 run_emp_clean(uv_work_t *);
+static void		 emp_clean_done(uv_work_t *, int);
 static void		 emp_clean(DB *, DB *, double);
-static ev_periodic	 clean_timer;
+static uv_timer_t	 emp_clean_timer;
 
 static hash_table_t	*phl_exempt_list;
 
@@ -138,10 +137,11 @@ emp_run()
 	}
 
 	if (do_phl_tracking || do_emp_tracking) {
-		ev_periodic_init(&clean_timer, start_emp_clean,
-				1200, 3600, NULL);
-		ev_periodic_start(EV_DEFAULT, &clean_timer);
+		uv_timer_init(loop, &emp_clean_timer);
+		uv_timer_start(&emp_clean_timer, start_emp_clean,
+			       3600 * 1000, 3600 * 1000);
 	}
+
 	return 0;
 }
 
@@ -397,30 +397,30 @@ time_t	ai = int64get(a->data),
 }
 
 static void
-start_emp_clean(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_periodic	*w;
+start_emp_clean(timer, status)
+	uv_timer_t	*timer;
 {
-	ev_periodic_stop(EV_DEFAULT, w);
-	thr_do_work(run_emp_clean, NULL, emp_clean_done);
+uv_work_t	*req;
+	req = xcalloc(1, sizeof(*req));
+	uv_queue_work(loop, req, run_emp_clean, emp_clean_done);
 }
 
 static void
-emp_clean_done(udata)
-	void	*udata;
+emp_clean_done(req, status)
+	uv_work_t	*req;
 {
-	ev_periodic_start(EV_DEFAULT, &clean_timer);
+	free(req);
 }
 
-static void *
-run_emp_clean(udata)
-	void	*udata;
+static void
+run_emp_clean(req)
+	uv_work_t	*req;
 {
 	if (do_emp_tracking)
 		emp_clean(emp_db, emp_last_decayed_db, emp_decay_persec);
+
 	if (do_phl_tracking)
 		emp_clean(phl_db, phl_last_decayed_db, phl_decay_persec);
-	return NULL;
 }
 
 static void

@@ -10,6 +10,8 @@
 
 #include	<fcntl.h>
 
+#include	<uv.h>
+
 #include	"setup.h"
 
 #ifdef HAVE_OPENSSL
@@ -22,7 +24,7 @@
 
 static listener_t *client_listeners;
 
-static void	 listen_accept(struct ev_loop *, ev_io *, int);
+static void	 on_connect(uv_stream_t *, int);
 
 static void	*listen_stanza_start(conf_stanza_t *, void *);
 static void	 listen_stanza_end(conf_stanza_t *, void *);
@@ -169,6 +171,7 @@ client_listen()
 	 */
 
 listener_t	*li;
+int		 err;
 
 	for (li = client_listeners; li; li = li->li_next) {
 	struct addrinfo	hints, *res, *r;
@@ -220,51 +223,35 @@ listener_t	*li;
 			return -1;
 		}
 
+		for (r = res, i = 0; r; r = r->ai_next)
+			i++;
+		li->li_uv = xcalloc(i, sizeof(uv_tcp_t));
+
 		for (r = res; r; r = r->ai_next) {
-		int	fd;
-		int	one = 1;
-		int	fl;
+		uv_tcp_t	*uv;
 
-			if ((fd = socket(r->ai_family, r->ai_socktype, r->ai_protocol)) == -1) {
-				nts_log(LOG_ERR, "listen: \"%s\": socket: %s",
-					li->li_address, strerror(errno));
+			++li->li_nuv;
+			uv = &li->li_uv[li->li_nuv - 1];
+
+			if (err = uv_tcp_init(loop, uv)) {
+				nts_log(LOG_ERR, "listen: \"%s\": %s",
+					li->li_address, uv_strerror(err));
 				return -1;
 			}
 
-			if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) == -1) {
-				nts_log(LOG_ERR, "listen: \"%s\": setsockopt(SO_REUSEADDR): %s",
-					li->li_address, strerror(errno));
+			if (err = uv_tcp_bind(uv, r->ai_addr)) {
+				nts_log(LOG_ERR, "listen: \"%s\": %s",
+					li->li_address, uv_strerror(err));
 				return -1;
 			}
 
-			if ((fl = fcntl(fd, F_GETFL, 0)) == -1) {
-				nts_log(LOG_ERR, "listen: \"%s\": fgetfl: %s",
-					li->li_address, strerror(errno));
+			if (err = uv_listen((uv_stream_t *) uv, 128, on_connect)) {
+				nts_log(LOG_ERR, "listen: \"%s\": %s",
+					li->li_address, uv_strerror(err));
 				return -1;
 			}
 
-			if (fcntl(fd, F_SETFL, fl | O_NONBLOCK) == -1) {
-				nts_log(LOG_ERR, "listen: \"%s\": fsetfl: %s",
-					li->li_address, strerror(errno));
-				return -1;
-			}
-
-			if (bind(fd, r->ai_addr, r->ai_addrlen) == -1) {
-				nts_log(LOG_ERR, "listen: \"%s\": bind: %s",
-					li->li_address, strerror(errno));
-				return -1;
-			}
-
-			if (listen(fd, 128) == -1) {
-				nts_log(LOG_ERR, "listen: \"%s\": listen: %s",
-					li->li_address, strerror(errno));
-				return -1;
-			}
-
-			li->li_fd = fd;
-			ev_io_init(&li->li_event, listen_accept, fd, EV_READ);
-			ev_io_start(client_loop, &li->li_event);
-			li->li_event.data = li;
+			uv->data = li;
 		}
 
 		freeaddrinfo(res);
@@ -274,18 +261,23 @@ listener_t	*li;
 }
 
 static void
-listen_accept(loop, w, revents)
-	struct ev_loop	*loop;
-	ev_io		*w;
+on_connect(server, status)
+	uv_stream_t	*server;
 {
-struct sockaddr_storage	 addr;
-socklen_t		 addrlen = sizeof(addr);
-int			 fd;
-listener_t		*li = w->data;
+listener_t	*li = server->data;
+uv_tcp_t	*stream;
+int		 err;
 
-	while ((fd = accept(li->li_fd, (struct sockaddr *) &addr, &addrlen)) != -1) {
-		client_accept(fd, (struct sockaddr *) &addr, addrlen, NULL, li);
-
-		addrlen = sizeof(addr);
+	stream = xcalloc(1, sizeof(*stream));
+	if (err = uv_tcp_init(loop, stream)) {
+		nts_log(LOG_ERR, "accept: %s", uv_strerror(err));
+		return;
 	}
+
+	if (err = uv_accept(server, (uv_stream_t *) stream)) {
+		nts_log(LOG_ERR, "accept: %s", uv_strerror(err));
+		return;
+	}
+
+	client_accept(stream, NULL, li);
 }

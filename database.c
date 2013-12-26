@@ -26,8 +26,11 @@ static uint64_t	 db_cache_size = 1024 * 1024 * 5; /* 5 MB */
 DB_ENV		*db_env;
 
 static void	 db_errcall(DB_ENV const *, char const *, char const *);
-static void	 db_flush(void *);
-static void	 db_checkpoint(void *);
+static void	 db_flush(uv_timer_t *, int);
+static void	 db_checkpoint(uv_timer_t *, int);
+
+static uv_timer_t	flush_timer,
+			checkpoint_timer;
 
 config_schema_opt_t db_opts[] = {
 	{ "path",	OPT_TYPE_STRING,	config_simple_string, &db_location },
@@ -88,8 +91,11 @@ int	ret;
 		panic("database: cannot open database environment \"%s\": %s",
 				db_location, db_strerror(ret));
 
-	net_cron(1, db_flush, NULL);
-	net_cron(600, db_checkpoint, NULL);
+	uv_timer_init(loop, &flush_timer);
+	uv_timer_start(&flush_timer, db_flush, 1000, 1000);
+
+	uv_timer_init(loop, &checkpoint_timer);
+	uv_timer_start(&checkpoint_timer, db_checkpoint, 600 * 1000, 600 * 1000);
 	return 0;
 }
 
@@ -180,15 +186,15 @@ db_errcall(env, pfx, msg)
 }
 
 static void
-db_flush(udata)
-	void	*udata;
+db_flush(timer, status)
+	uv_timer_t	*timer;
 {
 	db_env->log_flush(db_env, NULL);
 }
 
 static void
-db_checkpoint(udata)
-	void	*udata;
+db_checkpoint(timer, status)
+	uv_timer_t	*timer;
 {
 	db_env->txn_checkpoint(db_env, 0, 0, 0);
 }
