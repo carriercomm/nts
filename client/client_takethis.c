@@ -69,8 +69,7 @@ int	 rejected = (client->cl_state == CS_TAKETHIS) ? 439 : 437;
 	}
 
 	if (DEBUG(CIO))
-		client_log(LOG_DEBUG, client,
-			   "takethis_done; process_article\n");
+		client_log(LOG_DEBUG, client, "takethis_done; process_article");
 
 	process_article(client->cl_article, client->cl_msgid, client);
 	client->cl_flags |= CL_PENDING;
@@ -93,7 +92,7 @@ int	 rejected = (cl->cl_state == CS_TAKETHIS) ? 439 : 437;
 int	 accepted = (cl->cl_state == CS_TAKETHIS) ? 239 : 235;
 
 	if (DEBUG(CIO))
-		client_log(LOG_DEBUG, cl, "got process reply\n");
+		client_log(LOG_DEBUG, cl, "got process reply");
 
 	if (cl->cl_flags & (CL_DEAD | CL_DRAIN)) {
 		client_destroy(cl);
@@ -113,4 +112,5 @@ int	 accepted = (cl->cl_state == CS_TAKETHIS) ? 239 : 235;
 	cl->cl_state = CS_WAIT_COMMAND;
 	free(cl->cl_msgid);
 	cl->cl_msgid = NULL;
+
 }
