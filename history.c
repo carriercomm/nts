@@ -129,11 +129,18 @@ char		dbuf[258];
 	data.ulen = sizeof(dbuf);
 	data.flags |= DB_DBT_USERMEM;
 
-	if (ret = history_by_msgid->get(history_by_msgid, NULL, &key, &data, 0)) {
-		if (ret == DB_NOTFOUND)
-			return 0;
+	for (;;) {
+		if (ret = history_by_msgid->get(history_by_msgid, NULL, &key, &data, 0)) {
+			if (ret == DB_LOCK_DEADLOCK)
+				continue;
 
-		panic("history: failed to fetch history entry: %s", db_strerror(ret));
+			if (ret == DB_NOTFOUND)
+				return 0;
+
+			panic("history: failed to fetch history entry: %s", db_strerror(ret));
+		}
+
+		return 1;
 	}
 
 	return 1;
