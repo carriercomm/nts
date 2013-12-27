@@ -45,6 +45,7 @@
 #include	"auth.h"
 #include	"article.h"
 #include	"ctl.h"
+#include	"ntsmsg.h"
 
 static void	*server_stanza_start(conf_stanza_t *, void *);
 static void	 server_set_common_paths(conf_stanza_t *, conf_option_t *, void *, void *);
@@ -339,7 +340,7 @@ char		*s;
 		fclose(pidf);
 	}
 
-	nts_log(LOG_NOTICE, "RT/NTS [%s] running", pathhost);
+	nts_logm(NTS_fac, M_NTS_RUNNING, PACKAGE_VERSION, pathhost);
 
 	uv_run(loop, UV_RUN_DEFAULT);
 	return 0;

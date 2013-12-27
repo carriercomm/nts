@@ -7,7 +7,7 @@
 # freely. This software is provided 'as-is', without any express or implied
 # warranty.
 
-.SUFFIXES: .c .y .l .o .d .h
+.SUFFIXES: .c .y .l .o .d .h .M
 
 top_srcdir	= @top_srcdir@
 prefix		= @prefix@
@@ -16,7 +16,7 @@ bindir		= @bindir@
 sbindir		= @sbindir@
 sysconfdir	= @sysconfdir@
 
-VPATH		= ${top_srcdir}:${top_srcdir}/client
+VPATH		= ${top_srcdir}:${top_srcdir}/client:${top_srcdir}/msg
 
 CC		= @CC@
 MAKEDEPEND	= @CC@ -MM
@@ -29,6 +29,8 @@ LIBS		= @LIBS@
 
 YACC		= @YACC@
 LEX		= @LEX@
+
+MSGS		= ntsmsg.M
 
 SRCS		= nts.c		config.c	ctl.c		client.c	\
 		  server.c	spool.c		log.c		article.c	\
@@ -45,7 +47,7 @@ SRCS		= nts.c		config.c	ctl.c		client.c	\
 		  incoming.c
 
 EXTRA_SRCS	= @EXTRA_SRCS@
-OBJS		= ${SRCS:.c=.o} ${EXTRA_SRCS:.c=.o}
+OBJS		= ${MSGS:.M=.o} ${SRCS:.c=.o} ${EXTRA_SRCS:.c=.o}
 
 HDRS		= article.h config.h database.h filter.h history.h 		\
 		  client.h crc.h feeder.h hash.h log.h nts.h server.h		\
@@ -89,14 +91,21 @@ lex.yy.c: lexer.l
 lex.yy.o: lex.yy.c y.tab.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c lex.yy.c
 
-.c.o:
+%.o:	%.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
 
-.c.d:
+%.d:	%.c
 	$(MAKEDEPEND) $(CPPFLAGS) $< -o $@
 
+msgcomp: msgcomp.o
+	$(CC) $(CFLAGS) msgcomp.o -o msgcomp
+
+%.c:	%.M msgcomp
+	./msgcomp $<
+
 clean:
-	rm -f nts $(OBJS) $(SRCS:.c=.d)  lex.yy.c lex.yy.o y.tab.o y.tab.h y.tab.c
+	rm -f nts $(OBJS) $(SRCS:.c=.d) lex.yy.c lex.yy.o y.tab.o y.tab.h y.tab.c
+	rm -f msgcomp ${MSGS:.M=.c} ${MSGS:.M=.h} ${MSGS:.M=.o}
 
 depend: $(SRCS:.c=.d)
 	sed '/^# Do not remove this line -- make depend needs it/,$$ d' \

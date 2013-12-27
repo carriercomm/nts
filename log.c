@@ -123,7 +123,18 @@ va_list	ap;
 }
 
 void
-nts_vlog(int sev, char const *fmt, va_list ap)
+nts_logm(msg_t fac[], int msg, ...)
+{
+va_list	ap;
+	va_start(ap, msg);
+	nts_vlogm(fac, msg, ap);
+	va_end(ap);
+}
+
+void
+nts_vlog(sev, fmt, ap)
+	char const	*fmt;
+	va_list		 ap;
 {
 char	 buf[8192];
 char	*r = buf;
@@ -178,6 +189,71 @@ int	 len;
 		free(r);
 }
 
+void
+nts_vlogm(fac, msg, ap)
+	msg_t	fac[];
+	va_list	ap;
+{
+char	 buf[8192];
+char	*r = buf;
+int	 len;
+int	 sev;
+
+	len = vsnprintf(buf, sizeof(buf), fac[msg].m_text, ap);
+	if ((unsigned int) len >= sizeof (buf)) {
+		r = xmalloc(len + 1);
+		vsnprintf(r, len + 1, fac[msg].m_text, ap);
+	}
+
+	switch (log_target) {
+	case L_SYSLOG:
+		switch (fac[msg].m_sev) {
+		case 'F':
+		case 'E':
+			sev = LOG_ERR;
+			break;
+		case 'W':
+			sev = LOG_WARNING;
+			break;
+		case 'I':
+			sev = LOG_INFO;
+			break;
+		}
+
+		syslog(sev, "%%%s-%c-%s, %s\n", 
+		       fac[msg].m_subsys, fac[msg].m_sev,
+		       fac[msg].m_code, r);
+		break;
+
+	case L_STDOUT:
+	case L_FILE:
+	{
+	time_t		 now;
+	struct tm	*tm;
+	char		 tbuf[128];
+
+		time(&now);
+		tm = localtime(&now);
+		strftime(tbuf, sizeof(tbuf), "%b %d %H:%M:%S", tm);
+
+		if (logfile) {
+			rfcheck(logfile);
+			rfprintf(logfile, "%s %%%s-%c-%s, %s\n", tbuf, 
+				 fac[msg].m_subsys, fac[msg].m_sev,
+				 fac[msg].m_code, r);
+			rfflush(logfile);
+		} else {
+			printf("%s %%%s-%c-%s, %s\n", tbuf, 
+			       fac[msg].m_subsys, fac[msg].m_sev,
+			       fac[msg].m_code, r);
+		}
+		break;
+	}
+	}
+
+	if (r != buf)
+		free(r);
+}
 void
 log_article(char const *msgid, char const *path, server_t *server, char status, char const *reason, ...)
 {

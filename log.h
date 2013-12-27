@@ -17,6 +17,7 @@
 #include	"article.h"
 #include	"server.h"
 #include	"nts.h"
+#include	"msg.h"
 
 int	log_init(void);
 int	log_run(void);
@@ -24,6 +25,10 @@ void	log_shutdown(void);
 
 void	nts_log(int sev, char const *fmt, ...) attr_printf(2, 3);
 void	nts_vlog(int sev, char const *fmt, va_list ap);
+
+void	nts_logm(msg_t fac[], int msg, ...);
+void	nts_vlogm(msg_t fac[], int msg, va_list ap);
+
 
 void	log_article(char const *msgid, char const *path, server_t *, char status, 
 		char const *reason, ...) attr_printf(5, 6);
