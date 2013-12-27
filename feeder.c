@@ -25,7 +25,6 @@
 #include	"nts.h"
 #include	"server.h"
 #include	"log.h"
-#include	"net.h"
 #include	"spool.h"
 #include	"config.h"
 #include	"hash.h"

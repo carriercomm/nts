@@ -20,7 +20,6 @@
 #include	"database.h"
 #include	"crc.h"
 #include	"hash.h"
-#include	"net.h"
 #include	"emp.h"
 
 filter_list_t		filter_list;

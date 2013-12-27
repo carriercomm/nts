@@ -18,7 +18,9 @@ c_ihave(client, cmd, line)
 	client_t	*client;
 	char		*cmd, *line;
 {
-char	*msgid = NULL;
+char		*msgid = NULL;
+artbuf_t	*buf;
+
 	if ((msgid = next_word(&line)) == NULL || next_word(&line)) {
 		client_printf(client, "501 Syntax: IHAVE <message-id>\r\n");
 		return;
@@ -49,10 +51,17 @@ char	*msgid = NULL;
 		log_article(msgid, NULL, client->cl_server, '-', "duplicate");
 	} else {
 		pending_add(client, msgid);
-		client_printf(client, "335 %s OK, send it.\r\n", msgid);
-		client->cl_msgid = xstrdup(msgid);
 
-		client->cl_artsize = 0;
+		buf = xcalloc(1, sizeof(*buf));
+		buf->ab_msgid = xstrdup(msgid);
+		buf->ab_alloc = ARTBUF_START_SIZE;
+		buf->ab_text = xmalloc(buf->ab_alloc);
+		buf->ab_text[0] = 0;
+		buf->ab_client = client;
+
+		TAILQ_INSERT_TAIL(&client->cl_buffer, buf, ab_list);
 		client->cl_state = CS_IHAVE;
+
+		client_printf(client, "335 %s OK, send it.\r\n", msgid);
 	}
 }

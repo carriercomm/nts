@@ -30,7 +30,7 @@ LIBS		= @LIBS@
 YACC		= @YACC@
 LEX		= @LEX@
 
-MSGS		= ntsmsg.M
+MSGS		= ntsmsg.M dbmsg.M spoolmsg.M
 
 SRCS		= nts.c		config.c	ctl.c		client.c	\
 		  server.c	spool.c		log.c		article.c	\
@@ -55,7 +55,7 @@ HDRS		= article.h config.h database.h filter.h history.h 		\
 		  crypt.h emp.h base64.h
 EXTRA_DIST	= Makefile.in nts.conf.example parser.y lexer.l setup.h.in	\
 		  configure.ac configure LICENSE strlcpy.c 
-all: nts
+all: msgcomp nts
 
 dist: ${SRCS} ${HDRS} ${EXTRA_DIST}
 	@version=`sed -n 's/^AC_INIT(\[[^]]*\], \[\([^]]*\)\], \[[^]]*\])$$/\1/p' \
@@ -97,11 +97,18 @@ lex.yy.o: lex.yy.c y.tab.h
 %.d:	%.c
 	$(MAKEDEPEND) $(CPPFLAGS) $< -o $@
 
+msgcomp.o: msgcomp.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
+
 msgcomp: msgcomp.o
 	$(CC) $(CFLAGS) msgcomp.o -o msgcomp
 
-%.c:	%.M msgcomp
+%.c %.h:	%.M msgcomp
 	./msgcomp $<
+
+db.c: dbmsg.h
+spool.c: spoolmsg.h
+nts.c: ntsmsg.h
 
 clean:
 	rm -f nts $(OBJS) $(SRCS:.c=.d) lex.yy.c lex.yy.o y.tab.o y.tab.h y.tab.c

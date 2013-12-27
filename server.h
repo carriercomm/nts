@@ -19,7 +19,6 @@
 #include	"queue.h"
 #include	"database.h"
 #include	"spool.h"
-#include	"net.h"
 #include	"client.h"
 
 struct feeder;
@@ -71,10 +70,10 @@ typedef struct server {
 	char			*se_send_to;
 
 	hostlist_t		 se_accept_from;
-	address_list_t		 se_accept_addrs;
+	struct addrinfo		*se_accept_addrs;
 	hostlist_t		 se_exclude;
 	int			 se_resolving;
-	address_list_t		 se_resolvelist;
+	struct addrinfo		*se_resolvelist;
 
 	filter_list_t		 se_filters_in,
 				 se_filters_out;

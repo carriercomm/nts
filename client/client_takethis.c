@@ -21,7 +21,9 @@ c_takethis(client, cmd, line)
 	client_t	*client;
 	char		*cmd, *line;
 {
-char	*msgid = NULL;
+char		*msgid = NULL;
+artbuf_t	*buf;
+
 	if ((msgid = next_word(&line)) == NULL || next_word(&line)) {
 		/*
 		 * We have to close the connection here because the
@@ -34,62 +36,73 @@ char	*msgid = NULL;
 		return;
 	}
 
-	client->cl_state = CS_TAKETHIS;
-	client->cl_msgid = xstrdup(msgid);
+	buf = xcalloc(1, sizeof(*buf));
+	buf->ab_msgid = xstrdup(msgid);
+	buf->ab_alloc = ARTBUF_START_SIZE;
+	buf->ab_text = xmalloc(buf->ab_alloc);
+	buf->ab_text[0] = 0;
+	buf->ab_client = client;
 
-	client->cl_artsize = 0;
-	client->cl_article[0] = 0;
+	TAILQ_INSERT_TAIL(&client->cl_buffer, buf, ab_list);
+	client->cl_state = CS_TAKETHIS;
 }
 
 void
 client_takethis_done(client)
 	client_t	*client;
 {
-int	 rejected = (client->cl_state == CS_TAKETHIS) ? 439 : 437;
+int		 rejected = (client->cl_state == CS_TAKETHIS) ? 439 : 437;
+artbuf_t	*buf = TAILQ_LAST(&client->cl_buffer, artbuf_list);
 
 #if 0
 	pending_remove(client->cl_msgid);
 #endif
 
-	if (client->cl_artsize > max_article_size) {
+	if (buf->ab_len > max_article_size) {
 		client->cl_server->se_in_rejected++;
-		history_add(client->cl_msgid);
+		history_add(buf->ab_msgid);
 		client_log(LOG_INFO, client, "%s: too large (%d > %d)",
-				client->cl_msgid,
-				(int) client->cl_artsize,
+				buf->ab_msgid,
+				(int) buf->ab_len,
 				(int) max_article_size);
-		client_printf(client, "%d %s\r\n", rejected, client->cl_msgid);
-		log_article(client->cl_msgid, NULL, client->cl_server, '-', "too-large");
+		client_printf(client, "%d %s\r\n", rejected, buf->ab_msgid);
+		log_article(buf->ab_msgid, NULL, client->cl_server, '-', "too-large");
 		goto err;
 	}
 
-	if (!valid_msgid(client->cl_msgid)) {
-		client_printf(client, "%d %s\r\n", rejected, client->cl_msgid);
+	if (!valid_msgid(buf->ab_msgid)) {
+		client_log(LOG_INFO, client, "%s: invalid message-id",
+			   buf->ab_msgid);
+		log_article(buf->ab_msgid, NULL, client->cl_server, '-', "invalid-msgid");
+		client_printf(client, "%d %s\r\n", rejected, buf->ab_msgid);
 		goto err;
 	}
 
 	if (DEBUG(CIO))
 		client_log(LOG_DEBUG, client, "takethis_done; process_article");
 
-	process_article(client->cl_article, client->cl_msgid, client);
+	process_article(buf);
 	client->cl_flags |= CL_PENDING;
 	client_pause(client);
-	return;
 
 err:
+	TAILQ_REMOVE(&client->cl_buffer, buf, ab_list);
+	free(buf->ab_text);
+	free(buf->ab_msgid);
+	free(buf);
 	client->cl_state = CS_WAIT_COMMAND;
-	free(client->cl_msgid);
-	client->cl_msgid = NULL;
+	return;
 }
-
-void	client_incoming_reply(client_t *, int);
 
 void
 client_incoming_reply(cl, reason)
 	client_t	*cl;
 {
-int	 rejected = (cl->cl_state == CS_TAKETHIS) ? 439 : 437;
-int	 accepted = (cl->cl_state == CS_TAKETHIS) ? 239 : 235;
+int		 rejected = (cl->cl_state == CS_TAKETHIS) ? 439 : 437;
+int		 accepted = (cl->cl_state == CS_TAKETHIS) ? 239 : 235;
+artbuf_t	*buf;
+
+	buf = TAILQ_FIRST(&cl->cl_buffer);
 
 	if (DEBUG(CIO))
 		client_log(LOG_DEBUG, cl, "got process reply");
@@ -104,13 +117,15 @@ int	 accepted = (cl->cl_state == CS_TAKETHIS) ? 239 : 235;
 
 	if (reason == IN_OK)
 		client_printf(cl, "%d %s\r\n",
-			      accepted, cl->cl_msgid);
+			      accepted, buf->ab_msgid);
 	else
 		client_printf(cl, "%d %s\r\n",
-			      rejected, cl->cl_msgid);
+			      rejected, buf->ab_msgid);
 
 	cl->cl_state = CS_WAIT_COMMAND;
-	free(cl->cl_msgid);
-	cl->cl_msgid = NULL;
 
+	TAILQ_REMOVE(&cl->cl_buffer, buf, ab_list);
+	free(buf->ab_msgid);
+	free(buf->ab_text);
+	free(buf);
 }

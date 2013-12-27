@@ -9,7 +9,6 @@
  */
 
 #include	"client.h"
-#include	"net.h"
 
 static void	 client_tls_done(int fd, SSL *ssl, void *udata);
 

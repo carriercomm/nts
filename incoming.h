@@ -17,8 +17,8 @@
 #define	IN_ERR_DUPLICATE	3
 #define	IN_ERR_CANNOT_PARSE	4
 
-struct client;
-void	process_article(char const *, char const *, struct client *);
+struct artbuf;
+void	process_article(struct artbuf *);
 
 int	incoming_init(void);
 void	incoming_run(void);

@@ -33,7 +33,6 @@
 #include	"config.h"
 #include	"server.h"
 #include	"client.h"
-#include	"net.h"
 #include	"spool.h"
 #include	"log.h"
 #include	"database.h"
@@ -72,6 +71,8 @@ int		 nts_debug_flags;
 #endif
 
 static void	 usage(char const *);
+static void	 explain_msg(char const *);
+static void	 explain_msg_fac(msg_t[], char const *);
 
 static config_schema_opt_t server_opts[] = {
 	{ "contact",		OPT_TYPE_STRING,
@@ -118,7 +119,8 @@ usage(pname)
 	char const	*pname;
 {
 	fprintf(stderr,
-"usage: %s [-Vny] [-x <command>] [-c <conffile>] [-p <pidfile>]\n"
+"usage: %1$s [-Vny] [-x <command>] [-c <conffile>] [-p <pidfile>]\n"
+"usage: %1$s -M <msgid>\n"
 "\n"
 "    -h                 print this message\n"
 "    -V                 print version and exit\n"
@@ -127,6 +129,8 @@ usage(pname)
 "    -p <pidfile>       specify the pid file location\n"
 "    -c <conffile>      specify the configuration file\n"
 "    -y                 check spool files and exit\n"
+"\n"
+"    -M <msgid>         print detailed explanation for given message\n"
 , pname);
 }
 
@@ -150,7 +154,7 @@ char		*s;
 	article_init();
 	cq_init();
 
-	while ((c = getopt(argc, argv, "Vc:p:nx:yD:")) != -1) {
+	while ((c = getopt(argc, argv, "M:Vc:p:nx:yD:")) != -1) {
 		switch (c) {
 			case 'V':
 				printf("RT/NTS %s\n", PACKAGE_VERSION);
@@ -184,6 +188,10 @@ char		*s;
 			case 'y':
 				++yflag;
 				break;
+
+			case 'M':
+				explain_msg(optarg);
+				return 0;
 
 			case 'D':
 #ifndef	NDEBUG
@@ -264,8 +272,7 @@ char		*s;
 		char	 pidline[64];
 			if (fgets(pidline, sizeof(pidline), pidf)) {
 				if (atoi(pidline) && kill(atoi(pidline), 0) == 0) {
-					nts_log(LOG_CRIT, "RT/NTS already running (pid %d)",
-							atoi(pidline));
+					nts_logm(NTS_fac, M_NTS_ALDYRUNNING, atoi(pidline));
 					return 1;
 				}
 			}
@@ -449,7 +456,7 @@ void
 nts_shutdown(reason)
 	char const	*reason;
 {
-	nts_log(LOG_NOTICE, "shutting down: %s", reason);
+	nts_logm(NTS_fac, M_NTS_SHUTDWN, reason);
 	spool_shutdown();
 	server_shutdown();
 	filter_shutdown();
@@ -457,8 +464,7 @@ nts_shutdown(reason)
 	db_shutdown();
 
 	if (pid_file && unlink(pid_file) == -1)
-		nts_log(LOG_ERR, "cannot unlink pid file %s: %s",
-			pid_file, strerror(errno));
+		nts_logm(NTS_fac, M_NTS_RMPID, pid_file, strerror(errno));
 
 	log_shutdown();
 	exit(0);
@@ -796,3 +802,40 @@ uv_alloc(handle, sz, buf)
 	buf->base = xmalloc(sz);
 	buf->len = sz;
 }
+
+static void
+explain_msg(msgid)
+	char const	*msgid;
+{
+char	sev, subsys[32] = {}, mid[32] = {};
+
+	if (sscanf(msgid, "%31[A-Z]-%c-%31[A-Z]", subsys, &sev, mid) != 3) {
+		subsys[0] = 0;
+
+		if (sscanf(msgid, "%c-%31s", &sev, mid) != 2)
+			strlcpy(mid, msgid, sizeof(mid));
+	}
+
+	/* Perhaps we should have a list of message facilities? */
+	if (!*subsys || strcmp(subsys, "NTS") == 0)
+		explain_msg_fac(NTS_fac, mid);
+}
+
+static void
+explain_msg_fac(fac, msgid)
+	msg_t		 fac[];
+	char const	*msgid;
+{
+msg_t	*m;
+	for (m = &fac[0]; m->m_subsys; m++) {
+		if (strcmp(msgid, m->m_code))
+			continue;
+		printf("Message: %%%s-%c-%s, %s\n\n",
+		       m->m_subsys, m->m_sev, m->m_code,
+		       m->m_text);
+		printf("Explanation:\n\n");
+		printf("%s\n", m->m_help);
+	}
+}
+	
+

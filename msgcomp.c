@@ -127,6 +127,9 @@ int	 msgnum = 0;
 		}
 		*msg++ = 0;
 
+		fprintf(srcf, "{ \"%s\", \"%s\", '%c', \"%s\", \n",
+			subsys, line, *sev, escape(msg));
+
 		/* Now read the explanation message, terminated by '.' */
 		while (fgets(helpln, sizeof(helpln), inf)) {
 			++lineno;
@@ -134,10 +137,11 @@ int	 msgnum = 0;
 
 			if (strcmp(helpln, ".") == 0)
 				break;
+
+			fprintf(srcf, " \"%s\\n\"\n", escape(helpln));
 		}
 
-		fprintf(srcf, "{ \"%s\", \"%s\", '%c', \"%s\" },\n",
-			subsys, line, *sev, escape(msg));
+		fprintf(srcf, "},\n");
 
 		fprintf(hdrf, "#define M_%s_%s %d\n",
 			subsys, line, msgnum);
@@ -151,6 +155,7 @@ int	 msgnum = 0;
 
 	fprintf(hdrf, "#endif\n");
 
+	fprintf(srcf, "{ }\n");
 	fprintf(srcf, "};\n");
 	fclose(inf);
 	fclose(srcf);

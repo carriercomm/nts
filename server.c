@@ -22,7 +22,6 @@
 #include	"config.h"
 #include	"log.h"
 #include	"nts.h"
-#include	"net.h"
 #include	"feeder.h"
 
 static void	*peer_stanza_start(conf_stanza_t *, void *);
@@ -284,8 +283,6 @@ server_t	*server;
 	SIMPLEQ_INIT(&server->se_filters_in);
 	SIMPLEQ_INIT(&server->se_filters_out);
 	SLIST_INIT(&server->se_accept_from);
-	SIMPLEQ_INIT(&server->se_accept_addrs);
-	SIMPLEQ_INIT(&server->se_resolvelist);
 	SIMPLEQ_INIT(&server->se_offer_filters);
 
 	return server;
@@ -374,8 +371,6 @@ on_server_dns_done(req, status, res)
 	struct addrinfo		*res;
 {
 server_t	*se = req->data;
-address_t	*addr;
-struct addrinfo	*r;
 
 	assert(se->se_resolving);
 
@@ -385,30 +380,13 @@ struct addrinfo	*r;
 		return;
 	}
 
-	for (r = res; r; r = r->ai_next) {
-		addr = xcalloc(1, sizeof(*addr));
-		bcopy(r->ai_addr, &addr->ad_addr, r->ai_addrlen);
-		r->ai_addrlen = r->ai_addrlen;
-
-		SIMPLEQ_INSERT_TAIL(&se->se_resolvelist, addr, ad_list);
-	}
-
-	uv_freeaddrinfo(res);
+	res->ai_next = se->se_resolvelist;
+	se->se_resolvelist = res;
 
 	if (--se->se_resolving)
 		return;
 
-	while (addr = SIMPLEQ_FIRST(&se->se_accept_addrs)) {
-		SIMPLEQ_REMOVE_HEAD(&se->se_accept_addrs, ad_list);
-		free(addr);
-		addr = NULL;
-	}
-
-	while (addr = SIMPLEQ_FIRST(&se->se_resolvelist)) {
-		SIMPLEQ_REMOVE_HEAD(&se->se_resolvelist, ad_list);
-		SIMPLEQ_INSERT_TAIL(&se->se_accept_addrs, addr, ad_list);
-	}
-
+	se->se_accept_addrs = se->se_resolvelist;
 	rebuild_server_map();
 }
 
@@ -416,20 +394,20 @@ static void
 rebuild_server_map()
 {
 server_t	*se;
-address_t	*a;
+struct addrinfo	*r;
 size_t		 i = 0;
 	
 	smapsize = 0;
 	SLIST_FOREACH(se, &servers, se_list)
-		SIMPLEQ_FOREACH(a, &se->se_accept_addrs, ad_list) 
+		for (r = se->se_accept_addrs; r; r = r->ai_next)
 			smapsize++;
 	
 	server_map = xrealloc(server_map, sizeof(*server_map) * smapsize);
 
 	SLIST_FOREACH(se, &servers, se_list) {
-		SIMPLEQ_FOREACH(a, &se->se_accept_addrs, ad_list) {
+		for (r = se->se_accept_addrs; r; r = r->ai_next) {
 			server_map[i].sm_server = se;
-			bcopy(&a->ad_addr, &server_map[i].sm_addr, sizeof(a->ad_addr));
+			bcopy(r->ai_addr, &server_map[i].sm_addr, r->ai_addrlen);
 			i++;
 		}
 	}

@@ -33,7 +33,6 @@
 #endif
 
 #include	"client.h"
-#include	"net.h"
 #include	"config.h"
 #include	"server.h"
 #include	"log.h"
@@ -302,25 +301,28 @@ client_handle_line(cl, line)
 
 		client_printf(cl, "500 Unknown command.\r\n");
 	} else if (cl->cl_state == CS_TAKETHIS || cl->cl_state == CS_IHAVE) {
+	artbuf_t	*buf = TAILQ_LAST(&cl->cl_buffer, artbuf_list);
+
 		if (strcmp(line, ".") == 0) {
 			client_takethis_done(cl);
 		} else {
-			if (cl->cl_artsize <= max_article_size) {
-			size_t	newsz = (strlen(line) + 3 + cl->cl_artsize);
-				if (newsz >= cl->cl_artalloc) {
-					cl->cl_artalloc *= 2;
-					if (newsz >= cl->cl_artalloc)
-						cl->cl_artalloc = newsz + 1;
+			if (buf->ab_len <= max_article_size) {
+			size_t	newsz = (strlen(line) + 3 + buf->ab_len);
+
+				if (newsz >= buf->ab_alloc) {
+					buf->ab_alloc *= 2;
+					if (newsz >= buf->ab_alloc)
+						buf->ab_alloc = newsz + 1;
 					    
-					cl->cl_article = xrealloc(cl->cl_article,
-								  cl->cl_artalloc);
+					buf->ab_text = xrealloc(buf->ab_text,
+								buf->ab_alloc);
 				}
 
-				strlcat(cl->cl_article, line, cl->cl_artalloc);
-				strlcat(cl->cl_article, "\r\n", cl->cl_artalloc);
+				strlcat(buf->ab_text, line, buf->ab_alloc);
+				strlcat(buf->ab_text, "\r\n", buf->ab_alloc);
 			}
 
-			cl->cl_artsize += strlen(line) + 2;
+			buf->ab_len += strlen(line) + 2;
 		}
 	}
 }
@@ -431,9 +433,7 @@ client_t	*cl;
 	cl = xcalloc(1, sizeof(*cl));
 	cl->cl_stream = stream;
 	cl->cl_state = CS_WAIT_COMMAND;
-	cl->cl_artalloc = 16384;
-	cl->cl_article = xmalloc(cl->cl_artalloc);
-	cl->cl_article[0] = 0;
+	TAILQ_INIT(&cl->cl_buffer);
 	return cl;
 }
 
@@ -493,15 +493,22 @@ client_destroy(udata)
 	void	*udata;
 {
 client_t	*client = udata;
+artbuf_t	*buf;
+
 	if (client->cl_server) {
 		--client->cl_server->se_nconns;
 		SIMPLEQ_REMOVE(&client->cl_server->se_clients, client, client, cl_list);
 	}
 
+	while (buf = TAILQ_FIRST(&client->cl_buffer)) {
+		TAILQ_REMOVE(&client->cl_buffer, buf, ab_list);
+		free(buf->ab_msgid);
+		free(buf->ab_text);
+		free(buf);
+	}
+
 	pending_remove_client(client);
 	free(client->cl_stream);
-	free(client->cl_msgid);
-	free(client->cl_article);
 	free(client->cl_username);
 	free(client->cl_strname);
 	cq_free(client->cl_rdbuf);

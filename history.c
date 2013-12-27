@@ -20,7 +20,6 @@
 #include	"log.h"
 #include	"database.h"
 #include	"nts.h"
-#include	"net.h"
 
 static int	 history_get_msgid(DB *, DBT const *, DBT const *, DBT *);
 static void	 history_clean(uv_work_t *);

@@ -51,6 +51,7 @@
 #include	"nts.h"
 #include	"log.h"
 #include	"crc.h"
+#include	"spoolmsg.h"
 
 #ifndef HAVE_FDATASYNC
 # define fdatasync fsync
@@ -62,6 +63,7 @@ static uint64_t	 spool_size = 1024 * 1024 * 100; /* 100MB */
 static int64_t	 spool_max_files = 10;
 static int	 spool_check_crc = 0;
 static int	 spool_compress;
+static int	 spool_cfgerrors;
 static enum {
 	M_FILE,
 	M_MMAP
@@ -155,9 +157,11 @@ char	*v = opt->co_value->cv_string;
 		spool_method = M_MMAP;
 	else if (strcmp(v, "file") == 0)
 		spool_method = M_FILE;
-	else
-		nts_log(LOG_ERR, "\"%s\", line %d: invalid spool method \"%s\"",
-			opt->co_file, opt->co_lineno, v);
+	else {
+		nts_logm(SPOOL_fac, M_SPOOL_BADMETHOD,
+			 opt->co_file, opt->co_lineno, v);
+		++spool_cfgerrors;
+	}
 }
 
 static void
@@ -168,9 +172,12 @@ spool_set_compress(stz, opt, udata, arg)
 {
 int	n = opt->co_value->cv_number;
 
-	if (n < 1 || n > 9)
-		nts_log(LOG_ERR, "\"%s\", line %d: compression must be between 1 and 9",
-				opt->co_file, opt->co_lineno);
+	if (n < 1 || n > 9) {
+		nts_logm(SPOOL_fac, M_SPOOL_BADCOMPR, opt->co_file, opt->co_lineno);
+		++spool_cfgerrors;
+		return;
+	}
+
 	spool_compress = n;
 }
 int
@@ -181,17 +188,27 @@ size_t		 nfiles = 0, i;
 DIR		*dir;
 struct dirent	*de;
 
-	if (!spool_path) {
-		nts_log(LOG_CRIT, "spool: spool path not set");
+	if (spool_cfgerrors) {
+		nts_logm(SPOOL_fac, M_SPOOL_CFGERRS, spool_cfgerrors);
 		return -1;
 	}
 
-	if (mkdir(spool_path, 0700) == -1 && errno != EEXIST)
-		panic("spool: \"%s\": cannot create directory: %s",
-			spool_path, strerror(errno));
+	if (!spool_path) {
+		nts_logm(SPOOL_fac, M_SPOOL_NOPATH);
+		return -1;
+	}
 
-	if ((dir = opendir(spool_path)) == NULL)
-		panic("spool: \"%s\": opendir: %s", spool_path, strerror(errno));
+	if (mkdir(spool_path, 0700) == -1 && errno != EEXIST) {
+		nts_logm(SPOOL_fac, M_SPOOL_MKDFAIL,
+			 spool_path, strerror(errno));
+		return -1;
+	}
+
+	if ((dir = opendir(spool_path)) == NULL) {
+		nts_logm(SPOOL_fac, M_SPOOL_DOPNFAIL,
+			 spool_path, strerror(errno));
+		return -1;
+	}
 
 	while (de = readdir(dir)) {
 	char		*p;
@@ -203,8 +220,8 @@ struct dirent	*de;
 
 		n = strtoul(de->d_name, &p, 16);
 		if (*p) {
-			nts_log(LOG_WARNING, "spool: \"%s\": junk file in "
-				"spool directory: %s", spool_path, de->d_name);
+			nts_logm(SPOOL_fac, M_SPOOL_JUNK,
+				 spool_path, de->d_name);
 			continue;
 		}
 
@@ -468,9 +485,8 @@ size_t		 artloc;
 	}
 
 	if (hdr->sa_magic != SPOOL_MAGIC) {
-		nts_log(LOG_WARNING, "spool: \"%s\": article at %X,%lu: "
-			"bad magic", sf->sf_fname,
-			(int) spid, (long unsigned) spos);
+		nts_logm(SPOOL_fac, M_SPOOL_BADMAGIC,
+			 sf->sf_fname, (int) spid, (long unsigned) spos);
 		uv_rwlock_rdunlock(&spool_mtx);
 		errno = EIO;
 		return -1;
@@ -479,9 +495,9 @@ size_t		 artloc;
 	artloc = spos + hdr->sa_hdr_len;
 
 	if (artloc + hdr->sa_len > sf->sf_size) {
-		nts_log(LOG_WARNING, "spool: \"%s\": article at %.8lX/%lu goes "
-			       "past end of spool file", sf->sf_fname,
-			       (long unsigned) spid, (long unsigned) spos);
+		nts_logm(SPOOL_fac, M_SPOOL_TOOLONG,
+			 sf->sf_fname,
+			 (long unsigned) spid, (long unsigned) spos);
 		uv_rwlock_rdunlock(&spool_mtx);
 		errno = EIO;
 		return -1;
@@ -498,7 +514,7 @@ size_t		 artloc;
 
 	if (spool_check_crc && (hdr->sa_flags & ART_CRC)) {
 		if (crc64(artdata, hdr->sa_len) != hdr->sa_crc) {
-			nts_log(LOG_WARNING, "spool: \"%s\": bad CRC", sf->sf_fname);
+			nts_logm(SPOOL_fac, M_SPOOL_BADCRC, sf->sf_fname);
 			if (spool_method == M_FILE) {
 				free(artdata);
 				artdata = NULL;
@@ -519,8 +535,8 @@ size_t		 artloc;
 
 		if ((ret = uncompress(data, &datasize, (unsigned char *) artdata,
 		                      hdr->sa_len)) != Z_OK) {
-			nts_log(LOG_WARNING, "spool: \"%s\": uncompress "
-					     "failed: %s", sf->sf_fname, zError(ret));
+			nts_logm(SPOOL_fac, M_SPOOL_UNCMPFAIL,
+				 sf->sf_fname, zError(ret));
 
 			if (spool_method == M_FILE) {
 				free(artdata);
@@ -602,26 +618,26 @@ ssize_t		n;
 				sf->sf_fname, strerror(errno));
 
 	if (sb.st_size < sf->sf_size) {
-		nts_log(LOG_WARNING, "spool: \"%s\": invalid stored size, "
-				"verifying entire file", sf->sf_fname);
+		nts_logm(SPOOL_fac, M_SPOOL_VFYBADSZ, sf->sf_fname);
 		sf->sf_size = 8;
 	}
 
 	/*
 	 * 37 bytes after sz should be an EOS header
 	 */
-	if ((n = pread(sf->sf_fd, hdrbuf, sizeof(hdrbuf), sf->sf_size)) == -1)
-		panic("spool: \"%s\": read: %s",
-			sf->sf_fname, strerror(errno));
+	if ((n = pread(sf->sf_fd, hdrbuf, sizeof(hdrbuf), sf->sf_size)) == -1) {
+		nts_logm(SPOOL_fac, M_SPOOL_VFYRDFAIL,
+			 sf->sf_fname, strerror(errno));
+		panic("spool: unrecoverable error during verify");
+	}
 
 	if (n == SPOOL_HDR_SIZE) {
 		if (int32get(hdrbuf) == SPOOL_MAGIC_EOS)
 			return;
 	}
 
-	nts_log(LOG_WARNING, "spool: \"%s\": unclean shutdown, "
-			"verifying from %lu...", sf->sf_fname,
-			(long unsigned) sf->sf_size);
+	nts_logm(SPOOL_fac, M_SPOOL_VFYBEGIN, sf->sf_fname,
+		 (unsigned long) sf->sf_size);
 
 	/*
 	 * The most likely cause of this error (spool file longer than the
@@ -652,8 +668,8 @@ ssize_t		n;
 		hdr.sa_crc = int64get(hdrbuf + 29);
 
 		if (hdr.sa_magic == SPOOL_MAGIC_EOS) {
-			nts_log(LOG_WARNING, "spool: \"%s\": found EOS at %lu",
-					sf->sf_fname, (long unsigned) sf->sf_size);
+			nts_logm(SPOOL_fac, M_SPOOL_EOS, sf->sf_fname,
+				 (unsigned long) sf->sf_size);
 			sf->sf_size = pos;
 			return;
 		}
@@ -680,27 +696,31 @@ error:
 		free(data);
 		data = NULL;
 
-		nts_log(LOG_WARNING, "spool: \"%s\": invalid "
-			"article found at %lu",
-			sf->sf_fname, (long unsigned) pos);
+		nts_logm(SPOOL_fac, M_SPOOL_VFYIVART, sf->sf_fname,
+			 (unsigned long) pos);
 		sf->sf_size = pos;
 
 		bzero(hdrbuf, sizeof(hdrbuf));
 		int64put(hdrbuf, SPOOL_MAGIC_EOS);
-		if (pwrite(sf->sf_fd, hdrbuf, sizeof(hdrbuf), pos) < sizeof(hdrbuf)) 
-			panic("spool: \"%s\": write: %s",
-					sf->sf_fname, strerror(errno));
+		if (pwrite(sf->sf_fd, hdrbuf, sizeof(hdrbuf), pos) < sizeof(hdrbuf)) {
+			nts_logm(SPOOL_fac, M_SPOOL_VFYWRFAIL, sf->sf_fname,
+				 strerror(errno));
+			panic("spool: unrecoverable error during verify");
+		}
+
+		nts_logm(SPOOL_fac, M_SPOOL_VFYOKAY);
 		return;
 	}
 
-	nts_log(LOG_WARNING, "spool: \"%s\": no EOS magic at end of file",
-			sf->sf_fname);
+	nts_logm(SPOOL_fac, M_SPOOL_NOEOS, sf->sf_fname);
 
 	bzero(hdrbuf, sizeof(hdrbuf));
 	int64put(hdrbuf, SPOOL_MAGIC_EOS);
-	if (pwrite(sf->sf_fd, hdrbuf, sizeof(hdrbuf), pos) < sizeof(hdrbuf)) 
-		panic("spool: \"%s\": write: %s",
-			sf->sf_fname, strerror(errno));
+	if (pwrite(sf->sf_fd, hdrbuf, sizeof(hdrbuf), pos) < sizeof(hdrbuf)) {
+		nts_logm(SPOOL_fac, M_SPOOL_VFYWRFAIL, sf->sf_fname,
+			 strerror(errno));
+		panic("spool: unrecoverable error during verify");
+	}
 	sf->sf_size = pos;
 }
 

@@ -14,7 +14,6 @@
 
 #include	"rfile.h"
 #include	"log.h"
-#include	"net.h"
 
 void
 rfcheck(rf)

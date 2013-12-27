@@ -16,6 +16,7 @@ typedef struct msg {
 	const char	*m_code;
 	char		 m_sev;
 	const char	*m_text;
+	const char	*m_help;
 } msg_t;
 
 #endif	/* !NTS_MSG_H */

@@ -32,6 +32,25 @@
 struct server;
 struct article;
 
+/*
+ * This could possibly be a configuration option to be tuned upward on
+ * binary servers where most articles are large.
+ */
+#define	ARTBUF_START_SIZE	8192
+
+struct client;
+typedef struct artbuf {
+	char		*ab_text;
+	size_t		 ab_alloc;
+	size_t		 ab_len;
+	char		*ab_msgid;
+	struct client	*ab_client;
+	TAILQ_ENTRY(artbuf)
+			 ab_list;
+} artbuf_t;
+
+typedef TAILQ_HEAD(artbuf_list, artbuf) artbuf_list_t;
+
 typedef enum client_state {
 	CS_SSL_HANDSHAKE,
 	CS_WAIT_COMMAND,
@@ -73,10 +92,6 @@ typedef struct client {
 	uv_tcp_t	*cl_stream;
 	struct server	*cl_server;
 	client_state_t	 cl_state;
-	char		*cl_msgid;
-	char		*cl_article;
-	size_t		 cl_artsize;
-	size_t		 cl_artalloc;
 	char		*cl_strname;
 	char		*cl_username;
 	int		 cl_authenticated;
@@ -85,6 +100,7 @@ typedef struct client {
 	socklen_t	 cl_addrlen;
 	int		 cl_flags;
 	listener_t	*cl_listener;
+	artbuf_list_t	 cl_buffer;
 
 	charq_t		*cl_rdbuf;
 
