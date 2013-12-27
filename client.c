@@ -47,6 +47,7 @@
 #include	"auth.h"
 #include	"emp.h"
 #include	"incoming.h"
+#include	"clientmsg.h"
 
 static void	 on_client_read(uv_stream_t *, ssize_t, uv_buf_t const *);
 static void	 on_client_write_done(uv_write_t *, int);
@@ -131,15 +132,15 @@ int			addrlen = sizeof(addr);
 		client->cl_flags |= CL_SSL;
 
 	if (err = uv_tcp_nodelay(stream, 0)) {
-		nts_log(LOG_ERR, "accept: uv_tcp_nodelay: %s",
-			uv_strerror(err));
+		nts_logm(CLIENT_fac, M_CLIENT_ACPTERR,
+			 "uv_tcp_nodelay", uv_strerror(err));
 		client_close(client, 0);
 		return;
 	}
 
 	if (err = uv_tcp_getpeername(stream, (struct sockaddr *) &addr, &addrlen)) {
-		nts_log(LOG_ERR, "accept: uv_tcp_getpeername: %s",
-			uv_strerror(err));
+		nts_logm(CLIENT_fac, M_CLIENT_ACPTERR,
+			 "uv_tcp_getpeername", uv_strerror(err));
 		client_close(client, 0);
 		return;
 	}
@@ -147,8 +148,8 @@ int			addrlen = sizeof(addr);
 	if (err = getnameinfo((struct sockaddr *) &addr, addrlen,
 		    host, sizeof(host), serv, sizeof(serv),
 		    NI_NUMERICHOST | NI_NUMERICSERV)) {
-		nts_log(LOG_ERR, "accept: getnameinfo: %s",
-			gai_strerror(err));
+		nts_logm(CLIENT_fac, M_CLIENT_ACPTERR,
+			 "getnameinfo", gai_strerror(err));
 		client_close(client, 0);
 		return;
 	}
@@ -162,8 +163,7 @@ int			addrlen = sizeof(addr);
 			client_reader(client);
 			client_destroy(client);
 		} else {
-			nts_log(LOG_NOTICE, "unknown[%s]:%s: connection rejected: access denied",
-				host, serv);
+			nts_logm(CLIENT_fac, M_CLIENT_DENIED, host, serv);
 			client_printf(client, "502 Access denied (%s).\r\n", contact_address);
 			client_close(client, 1);
 		}
@@ -173,8 +173,8 @@ int			addrlen = sizeof(addr);
 
 	if (server) {
 		if (server->se_nconns == server->se_maxconns_in) {
-			nts_log(LOG_NOTICE, "%s[%s]:%s: connection rejected: too many connections",
-				server->se_name, host, serv);
+			nts_logm(CLIENT_fac, M_CLIENT_TOOMANY, server->se_name,
+				 host, serv);
 			client_printf(client, "400 Too many connections (%s).\r\n", contact_address);
 			client_close(client, 1);
 			return;

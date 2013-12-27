@@ -30,7 +30,7 @@ LIBS		= @LIBS@
 YACC		= @YACC@
 LEX		= @LEX@
 
-MSGS		= ntsmsg.M dbmsg.M spoolmsg.M
+MSGS		= ntsmsg.M dbmsg.M spoolmsg.M clientmsg.M
 
 SRCS		= nts.c		config.c	ctl.c		client.c	\
 		  server.c	spool.c		log.c		article.c	\

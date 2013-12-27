@@ -1,0 +1,89 @@
+!CLIENT
+
+ACPTERR	E	accepting client: %1$s: %2$s
+An error occurred while attempting to accept a new client connection.
+This is usually a transient error which will resolve itself.
+.
+
+DENIED	I	unknown[%1$s]:%2$s: connection rejected: access denied
+A client attempted to connect, but was denied because its IP addess
+did not match any configured servers, and a reader-handler is not
+configured.
+
+If this client should be accepted, add its IP address or network to the
+appropriate server's accept-from configuration.
+
+If unauthorised clients should be passed to a reader handling program,
+such as nnrpd, then configure an appropriate reader-handler in
+nts.conf.
+.
+
+TOOMANY	W	%1$s[%2$s]:%3$s: connection rejected: too many connections
+A client connection was rejected because the server it is associated
+with has already made too many connections.  Either increase the
+max-connections value for this server, or configure the remote system
+to attempt fewer connections.
+.
+
+SSLCTXFAIL	F	listener "%1$s": cannot create SSL context: %2$s
+NTS was unable to create its internal context for this SSL listener.
+This may indicate a lack of system resources.
+.
+
+SSLCERTFAIL	F	listener "%1$s": cannot load SSL certificate: %2$s
+NTS was unable to load the configured SSL certificate for this SSL
+listener.  Check that the correct path has been specified and that NTS
+has permission to load the certificate file.
+.
+
+SSLKEYFAIL	F	listener "%1$s": cannot load SSL certificate: %2$s
+NTS was unable to load the configured SSL key for this SSL listener.  Check 
+that the correct path has been specified and that NTS has permission to load 
+the certificate file.
+.
+
+SSLCYFAIL	F	listener %1$s: no valid cyphers
+No valid SSL cyphers were found in the cypher list configured for the
+specified listener.  Ensure that the installed version of OpenSSL
+supports the requested cyphers.
+.
+
+NOSSL	F	listener %s: SSL support not available
+A listener was configured to use SSL, but this version of NTS was not
+built with SSL support.  Rebuild NTS from source, or if you obtained a
+binary distribution, ask the builder to build with SSL support.
+.
+
+SSLBADOPT	F	"%1$s", line %2$d: unknown SSL option "%3$s",
+An invalid SSL mode was specified for this listener connection.  The
+SSL mode should be 'always', to enable SSL on this connection by
+default, or 'starttls' to enable the STARTTLS command for clients that
+wish to enable SSL.
+.
+
+INVADDR	F	listen: "%1$s": invalid address
+An invalid listen address was specified in a listener.  The listen
+address should be in one of the following forms:
+
+ A port:                       listen "119";
+ A hostname and port:          listen "news.example.com:119";
+ An IPv4 address and port:     listen "127.0.0.1:119";
+ An IPv6 address and port:     listen "[::1]:119";
+.
+
+INVHOST	F	listen: %1$s: invalid host: %2$s
+NTS was unable to resolve the listen address specified for this
+listener.  Either the hostname is incorrect or, if the address was
+specified in IP address format, the IP address is invalid.
+.
+
+LSNFAIL	F	listen: "%1$s": %2$s: %3$s
+NTS was unable to listen on the specified address / hostname. Consult
+the error message for more detailed information.
+.
+
+LSNCFGERRS	F	listen: %d configuration errors
+The listener subsystem was unable to start because of previous
+configuration errors.  Consult previous message for the error(s) and
+fix them.
+.

@@ -12,6 +12,7 @@
 #include	"server.h"
 #include	"auth.h"
 #include	"log.h"
+#include	"clientmsg.h"
 
 void
 c_authinfo(client, cmd, line)
@@ -97,10 +98,8 @@ char	*type;
 					NI_NUMERICHOST | NI_NUMERICSERV);
 
 				if (se->se_nconns == se->se_maxconns_in) {
-					nts_log(LOG_NOTICE, "%s[%s]:%s: "
-						"connection rejected: "
-						"too many connections",
-						se->se_name, host, serv);
+					nts_logm(CLIENT_fac, M_CLIENT_TOOMANY,
+						 se->se_name, host, serv);
 					client_printf(client, 
 						"481 Too many connections "
 						"(%s).\r\n", contact_address);

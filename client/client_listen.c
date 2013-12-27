@@ -21,8 +21,10 @@
 
 #include	"client.h"
 #include	"log.h"
+#include	"clientmsg.h"
 
 static listener_t *client_listeners;
+static int	   listen_cfgerrs;
 
 static void	 on_connect(uv_stream_t *, int);
 
@@ -72,36 +74,40 @@ listener_t	*li = udata;
 	int	ret;
 
 		if ((li->li_ssl = SSL_CTX_new(SSLv23_server_method())) == NULL) {
-			nts_log(LOG_ERR, "listener \"%s\": cannot create SSL context: %s",
-					stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
+			nts_logm(CLIENT_fac, M_CLIENT_SSLCTXFAIL,
+				 stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
+			++listen_cfgerrs;
 			return;
 		}
 
 		if ((ret = SSL_CTX_use_certificate_file(li->li_ssl,
 				li->li_ssl_cert, SSL_FILETYPE_PEM)) != 1) {
-			nts_log(LOG_ERR, "listener \"%s\": cannot load SSL certificate: %s",
-					stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
+			nts_logm(CLIENT_fac, M_CLIENT_SSLCERTFAIL,
+				 stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
+			++listen_cfgerrs;
 			return;
 		}
 
 		if ((ret = SSL_CTX_use_PrivateKey_file(li->li_ssl,
 				li->li_ssl_key, SSL_FILETYPE_PEM)) != 1) {
-			nts_log(LOG_ERR, "listener \"%s\": cannot load SSL private key: %s",
-					stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
+			nts_logm(CLIENT_fac, M_CLIENT_SSLKEYFAIL,
+				 stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
+			++listen_cfgerrs;
 			return;
 		}
 
 		if (li->li_ssl_cyphers) {
 			if (SSL_CTX_set_cipher_list(li->li_ssl, li->li_ssl_cyphers) == 0) {
-				nts_log(LOG_ERR, "listener \"%s\": no valid cyphers",
-						stz->cs_title);
+				nts_logm(CLIENT_fac, M_CLIENT_SSLCYFAIL, stz->cs_title);
+				++listen_cfgerrs;
 				return;
 			}
 		}
 
 		SSL_CTX_set_options(li->li_ssl, SSL_OP_NO_SSLv2);
 #else
-		nts_log(LOG_ERR, "listener \"%s\": SSL support not enabled", stz->cs_title);
+		nts_logm(CLIENT_fac, M_CLIENT_NOSSL, stz->cs_title);
+		++listen_cfgerrs;
 		return;
 #endif
 	}
@@ -122,9 +128,11 @@ listener_t	*li = udata;
 		li->li_ssl_type = SSL_ALWAYS;
 	} else if (strcmp(v, "starttls") == 0) {
 		li->li_ssl_type = SSL_STARTTLS;
-	} else
-		nts_log(LOG_ERR, "\"%s\", line %d: unknown SSL option \"%s\"",
-				opt->co_file, opt->co_lineno, v);
+	} else {
+		nts_logm(CLIENT_fac, M_CLIENT_SSLBADOPT,
+			 opt->co_file, opt->co_lineno, v);
+		++listen_cfgerrs;
+	}
 }
 
 void
@@ -173,6 +181,11 @@ client_listen()
 listener_t	*li;
 int		 err;
 
+	if (listen_cfgerrs) {
+		nts_logm(CLIENT_fac, M_CLIENT_LSNCFGERRS, listen_cfgerrs);
+		return -1;
+	}
+
 	for (li = client_listeners; li; li = li->li_next) {
 	struct addrinfo	hints, *res, *r;
 	int		 i;	
@@ -184,16 +197,14 @@ int		 err;
 		if (*listr == '[') {
 			/* [host]:port form, used for IPv6 */
 			if ((port = index(listr, ']')) == NULL) {
-				nts_log(LOG_ERR, "listen: \"%s\": invalid address",
-					listr);
+				nts_logm(CLIENT_fac, M_CLIENT_INVADDR, listr);
 				return -1;
 			}
 
 			addr = listr + 1;
 			*port++ = 0;
 			if (*port != ':') {
-				nts_log(LOG_ERR, "listen: \"%s\": invalid address",
-					li->li_address);
+				nts_logm(CLIENT_fac, M_CLIENT_INVADDR, li->li_address);
 				return -1;
 			}
 			port++;
@@ -218,8 +229,8 @@ int		 err;
 		hints.ai_flags = AI_PASSIVE;
 
 		if (i = getaddrinfo(addr, port, &hints, &res)) {
-			nts_log(LOG_ERR, "listen: \"%s\": bad address: %s",
-				li->li_address, gai_strerror(i));
+			nts_logm(CLIENT_fac, M_CLIENT_INVHOST, li->li_address,
+				 gai_strerror(i));
 			return -1;
 		}
 
@@ -234,20 +245,23 @@ int		 err;
 			uv = &li->li_uv[li->li_nuv - 1];
 
 			if (err = uv_tcp_init(loop, uv)) {
-				nts_log(LOG_ERR, "listen: \"%s\": %s",
-					li->li_address, uv_strerror(err));
+				nts_logm(CLIENT_fac, M_CLIENT_LSNFAIL,
+					 li->li_address, "uv_tcp_init",
+					 uv_strerror(err));
 				return -1;
 			}
 
 			if (err = uv_tcp_bind(uv, r->ai_addr)) {
-				nts_log(LOG_ERR, "listen: \"%s\": %s",
-					li->li_address, uv_strerror(err));
+				nts_logm(CLIENT_fac, M_CLIENT_LSNFAIL,
+					 li->li_address, "uv_tcp_bind",
+					 uv_strerror(err));
 				return -1;
 			}
 
 			if (err = uv_listen((uv_stream_t *) uv, 128, on_connect)) {
-				nts_log(LOG_ERR, "listen: \"%s\": %s",
-					li->li_address, uv_strerror(err));
+				nts_logm(CLIENT_fac, M_CLIENT_LSNFAIL,
+					 li->li_address, "uv_listen",
+					 uv_strerror(err));
 				return -1;
 			}
 
@@ -270,12 +284,14 @@ int		 err;
 
 	stream = xcalloc(1, sizeof(*stream));
 	if (err = uv_tcp_init(loop, stream)) {
-		nts_log(LOG_ERR, "accept: %s", uv_strerror(err));
+		nts_logm(CLIENT_fac, M_CLIENT_ACPTERR,
+			 "uv_tcp_init", uv_strerror(err));
 		return;
 	}
 
 	if (err = uv_accept(server, (uv_stream_t *) stream)) {
-		nts_log(LOG_ERR, "accept: %s", uv_strerror(err));
+		nts_logm(CLIENT_fac, M_CLIENT_ACPTERR,
+			 "uv_accept", uv_strerror(err));
 		return;
 	}
 
