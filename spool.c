@@ -269,36 +269,12 @@ size_t		 artlen = strlen(art->art_content);
 int		 ret;
 unsigned char	*data;
 unsigned long	 datalen;
-
-	uv_rwlock_wrlock(&spool_mtx);
-	sf = &spool_files[spool_cur_file];
-
-	if (sf->sf_size + artlen + SPOOL_HDR_SIZE*2 >= sf->sf_dsz) {
-		spool_write_size();
-
-		/* Spool file is full, rotate (if necessary) and open another one. */
-		if ((spool_cur_file + 1) == spool_max_files) {
-			spool_file_close(0, 1);
-			spool_base++;
-
-			bcopy(&spool_files[1], &spool_files[0],
-				sizeof(spool_file_t) * (spool_max_files - 1));
-
-			spool_file_open(spool_max_files - 1, 1);
-
-		} else {
-			spool_cur_file++;
-			spool_file_open(spool_cur_file, 1);
-		}
-
-		sf = &spool_files[spool_cur_file];
-	}
-
-	if (spool_method == M_MMAP)
-		hdr = sf->sf_addr + sf->sf_size;
-	else
-		hdr = hdrbuf;
-
+off_t		 s_size;
+unsigned char	*s_addr;
+	/*
+	 * Create the header and compress (if enabled) before we acquire
+	 * the lock.
+	 */
 	art->art_flags |= ART_CRC;
 	art->art_flags &= ~ART_COMPRESSED;
 
@@ -316,6 +292,45 @@ unsigned long	 datalen;
 		datalen = strlen(art->art_content);
 	}
 
+	/* lock is held from here */
+	uv_rwlock_wrlock(&spool_mtx);
+	sf = &spool_files[spool_cur_file];
+
+	/*
+	 * Check if we need to rotate to a new spool file.
+	 */
+	if (sf->sf_size + datalen + SPOOL_HDR_SIZE*2 >= sf->sf_dsz) {
+		spool_write_size();
+		spool_write_eos(sf, sf->sf_size);
+
+		if ((spool_cur_file + 1) == spool_max_files) {
+			spool_file_close(0, 1);
+			spool_base++;
+
+			bcopy(&spool_files[1], &spool_files[0],
+				sizeof(spool_file_t) * (spool_max_files - 1));
+
+			spool_file_open(spool_max_files - 1, 1);
+
+		} else {
+			spool_cur_file++;
+			spool_file_open(spool_cur_file, 1);
+		}
+
+		sf = &spool_files[spool_cur_file];
+	}
+
+	s_size = sf->sf_size;
+	s_addr = sf->sf_addr;
+
+	art->art_spool_pos.sp_id = spool_base + spool_cur_file;
+	art->art_spool_pos.sp_offset = s_size;
+
+	if (spool_method == M_MMAP)
+		hdr = s_addr + s_size;
+	else
+		hdr = hdrbuf;
+
 	int32put(hdr + hdrpos, SPOOL_MAGIC);			hdrpos += 4;
 	int32put(hdr + hdrpos, datalen);			hdrpos += 4;
 	int8put(hdr + hdrpos, SPOOL_HDR_SIZE);			hdrpos += 1;
@@ -327,14 +342,29 @@ unsigned long	 datalen;
 
 	assert(hdrpos == SPOOL_HDR_SIZE);
 
+	if (!spool_do_sync) {
+		/*
+		 * Increment the spool's offset and release the lock immediately,
+		 * so that multiple writers can do I/O simultaneously.  This can
+		 * lose articles if a later article is written before the article
+		 * that precedes it and we then crash, so only do it when sync
+		 * is disabled.
+		 */
+		sf->sf_size += SPOOL_HDR_SIZE + datalen;
+		uv_rwlock_wrunlock(&spool_mtx);
+	}
+
 	if (spool_method == M_MMAP) {
 		bcopy(data, hdr + SPOOL_HDR_SIZE, datalen);
-		spool_write_eos(sf, sf->sf_size + datalen + SPOOL_HDR_SIZE);
+		if (spool_do_sync)
+			spool_write_eos(sf, s_size + datalen + SPOOL_HDR_SIZE);
 		ret = msync(hdr, SPOOL_HDR_SIZE + datalen + SPOOL_HDR_SIZE,
 				spool_do_sync ? MS_SYNC : MS_ASYNC);
 	} else {
 	struct iovec	iov[3];
 	char		eos[4];
+	ssize_t		want;
+
 		int32put(eos, SPOOL_MAGIC_EOS);
 		iov[0].iov_base = hdrbuf;
 		iov[0].iov_len = SPOOL_HDR_SIZE;
@@ -343,8 +373,11 @@ unsigned long	 datalen;
 		iov[2].iov_base = eos;
 		iov[2].iov_len = sizeof(eos);
 
-		if (pwritev(sf->sf_fd, iov, 3, sf->sf_size) <
-		    (iov[0].iov_len + iov[1].iov_len + iov[2].iov_len))
+		want = iov[0].iov_len + iov[1].iov_len;
+		if (spool_do_sync)
+			want += iov[2].iov_len;
+
+		if (pwritev(sf->sf_fd, iov, spool_do_sync ? 3 : 2, s_size) < want)
 			panic("spool: \"%s\": write error: %s",
 			      sf->sf_fname, strerror(errno));
 		if (spool_do_sync)
@@ -361,12 +394,11 @@ unsigned long	 datalen;
 		data = NULL;
 	}
 
-	art->art_spool_pos.sp_id = spool_base + spool_cur_file;
-	art->art_spool_pos.sp_offset = sf->sf_size;
+	if (spool_do_sync) {
+		sf->sf_size += SPOOL_HDR_SIZE + datalen;
+		uv_rwlock_wrunlock(&spool_mtx);
+	}
 
-	sf->sf_size += SPOOL_HDR_SIZE + datalen;
-
-	uv_rwlock_wrunlock(&spool_mtx);
 	return 0;
 }
 
@@ -807,8 +839,17 @@ spool_write_eos(sf, pos)
 	spool_file_t	*sf;
 	spool_offset_t	 pos;
 {
-	bzero(sf->sf_addr + pos, SPOOL_HDR_SIZE);
-	int32put(sf->sf_addr + pos, SPOOL_MAGIC_EOS);
+	if (spool_method == M_MMAP) {
+		bzero(sf->sf_addr + pos, SPOOL_HDR_SIZE);
+		int32put(sf->sf_addr + pos, SPOOL_MAGIC_EOS);
+	} else {
+	char	eos[sizeof(uint32_t)];
+		int32put(eos, SPOOL_MAGIC_EOS);
+		if (pwrite(sf->sf_fd, eos, sizeof(eos), pos) < sizeof(eos))
+			panic("spool: \"%s\": write: %s", sf->sf_fname,
+			      strerror(errno));
+	}
+
 }
 
 void
