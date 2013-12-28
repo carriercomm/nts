@@ -163,7 +163,7 @@ char		*s;
 
 	snprintf(version_string, sizeof(version_string), "RT/NTS %s ", PACKAGE_VERSION);
 	switch (*PACKAGE_VERSION) {
-	case 'V': strlcat(version_string, "(RELEASE)", sizeof(version_string)); break;
+	case 'R': strlcat(version_string, "(RELEASE)", sizeof(version_string)); break;
 	case 'T': strlcat(version_string, "(TEST RELEASE)", sizeof(version_string)); break;
 	case 'D': strlcat(version_string, "(DEVELOPMENT)", sizeof(version_string)); break;
 	}
