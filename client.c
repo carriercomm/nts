@@ -635,6 +635,13 @@ client_t		*cl = cwr->client;
 	free(cwr);
 	free(wr);
 
+#ifdef	HAVE_OPENSSL
+	if (status == 0 && (cl->cl_flags & CL_SSL_SHUTDN)) {
+		client_close(cl, 1);
+		return;
+	}
+#endif
+
 	if (status == 0 || status == UV_ECANCELED ||
 	    (cl->cl_flags & CL_DEAD))
 		return;
@@ -827,7 +834,18 @@ client_close(cl, drain)
 		return;
 
 	if (drain) {
-	uv_shutdown_t	*req = xcalloc(1, sizeof(*req));
+	uv_shutdown_t	*req;
+
+#ifdef	HAVE_OPENSSL
+		if (!(cl->cl_flags & CL_SSL_SHUTDN)) {
+			SSL_shutdown(cl->cl_ssl);
+			cl->cl_flags |= CL_SSL_SHUTDN;
+			client_write_tls_pending(cl);
+			return;
+		}
+#endif
+
+		req = xcalloc(1, sizeof(*req));
 
 		cl->cl_flags |= CL_DRAIN;
 		req->data = cl;

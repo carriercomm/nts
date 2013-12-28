@@ -78,14 +78,15 @@ typedef enum client_state {
 	CS_DEAD
 } client_state_t;
 
-#define	CL_PAUSED	0x01	/* Ignoring reads from this client */
-#define	CL_DEAD		0x02	/* Client marked to be freed */
-#define	CL_SSL		0x04	/* SSL is enabled */
-#define	CL_FREE		0x08
-#define CL_READABLE	0x10
-#define CL_WRITABLE	0x20
-#define CL_DRAIN	0x40	/* Destroy once wrbuf is empty */
-#define	CL_SSL_ACPTING	0x80	/* SSL_accept() in progress */
+#define	CL_PAUSED	0x001	/* Ignoring reads from this client */
+#define	CL_DEAD		0x002	/* Client marked to be freed */
+#define	CL_SSL		0x004	/* SSL is enabled */
+#define	CL_FREE		0x008
+#define CL_READABLE	0x010
+#define CL_WRITABLE	0x020
+#define CL_DRAIN	0x040	/* Destroy once wrbuf is empty */
+#define	CL_SSL_ACPTING	0x080	/* SSL_accept() in progress */
+#define	CL_SSL_SHUTDN	0x100	/* SSL_shutdown() in progress */
 
 typedef enum {
 	SSL_NEVER = 0,
