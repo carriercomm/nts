@@ -11,6 +11,8 @@
 #ifndef NTS_INCOMING_H
 #define NTS_INCOMING_H
 
+#include	"client.h"
+
 #define	IN_OK			0
 #define	IN_ERR_TOO_OLD		1
 #define	IN_ERR_FILTER		2
@@ -18,7 +20,7 @@
 #define	IN_ERR_CANNOT_PARSE	4
 
 struct artbuf;
-void	process_article(struct artbuf *);
+void	process_article(client_t *, artbuf_list_t *);
 
 int	incoming_init(void);
 void	incoming_run(void);

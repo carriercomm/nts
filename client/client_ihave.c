@@ -60,7 +60,7 @@ artbuf_t	*buf;
 		buf->ab_client = client;
 		buf->ab_type = AB_IHAVE;
 
-		TAILQ_INSERT_TAIL(&client->cl_buffer, buf, ab_list);
+		TAILQ_INSERT_TAIL(client->cl_buffer, buf, ab_list);
 		client->cl_state = CS_IHAVE;
 
 		client_printf(client, "335 %s OK, send it.\r\n", msgid);

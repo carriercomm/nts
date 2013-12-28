@@ -52,11 +52,22 @@ typedef struct artbuf {
 	int		 ab_flags;
 	struct client	*ab_client;
 	ab_type_t	 ab_type;
+	int		 ab_status;
 	TAILQ_ENTRY(artbuf)
 			 ab_list;
 } artbuf_t;
 
 typedef TAILQ_HEAD(artbuf_list, artbuf) artbuf_list_t;
+
+typedef struct msglist {
+	char		*ml_msgid;
+	ab_type_t	 ml_type;
+
+	TAILQ_ENTRY(msglist)
+			 ml_list;
+} msglist_t;
+
+typedef TAILQ_HEAD(msglist_list, msglist) msglist_list_t;
 
 typedef enum client_state {
 	CS_SSL_HANDSHAKE,
@@ -106,8 +117,9 @@ typedef struct client {
 	socklen_t	 cl_addrlen;
 	int		 cl_flags;
 	listener_t	*cl_listener;
-	artbuf_list_t	 cl_buffer;
+	artbuf_list_t	*cl_buffer;
 	int		 cl_nbuffered;
+	msglist_list_t	 cl_msglist;
 
 	charq_t		*cl_rdbuf;
 	int		 cl_last_was_dot; /* XXX awful: see client_handle_io() */
@@ -124,7 +136,7 @@ typedef SIMPLEQ_HEAD(client_list, client) client_list_t;
 int	client_init(void);
 int	client_run(void);
 
-void	client_incoming_reply(client_t *, artbuf_t *, int);
+void	client_incoming_reply(client_t *, artbuf_list_t *);
 
 /*
  * Internal functions.

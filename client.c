@@ -261,7 +261,7 @@ client_handle_io(cl)
 			client_log(LOG_DEBUG, cl, "on_client_read: reading article: %d"
 					          ", buffer: %p, nbuffered: %d, state: %d",
 				   cl->cl_state == CS_TAKETHIS || cl->cl_state == CS_IHAVE,
-				   TAILQ_FIRST(&cl->cl_buffer),
+				   TAILQ_FIRST(cl->cl_buffer),
 				   cl->cl_nbuffered,
 				   cl->cl_state);
 
@@ -269,7 +269,7 @@ client_handle_io(cl)
 			if (DEBUG(CIO))
 				client_log(LOG_DEBUG, cl, "on_client_read: article buffer full");
 			client_pause(cl);
-			return;
+			break;
 		}
 
 		/*
@@ -285,14 +285,14 @@ client_handle_io(cl)
 		if (cl->cl_nbuffered > 1 &&
 		    !(cl->cl_state== CS_TAKETHIS || cl->cl_state == CS_IHAVE) &&
 		    !cl->cl_last_was_dot) {
-		artbuf_t	*abuf = TAILQ_FIRST(&cl->cl_buffer);
+		msglist_t	*msg = TAILQ_FIRST(&cl->cl_msglist);
 
 			if (DEBUG(CIO))
 				client_log(LOG_DEBUG, cl, "on_client_read: buffering 1");
 
 			client_printf(cl, "%d %s\r\n",
-				      (abuf->ab_type == AB_TAKETHIS) ? 239 : 235,
-				      abuf->ab_msgid);
+				      (msg->ml_type == AB_TAKETHIS) ? 239 : 235,
+				      msg->ml_msgid);
 		}
 
 		cl->cl_last_was_dot = 0;
@@ -310,6 +310,12 @@ client_handle_io(cl)
 
 		if (cl->cl_flags & (CL_DEAD | CL_PAUSED))
 			break;
+	}
+
+	if (TAILQ_FIRST(cl->cl_buffer)) {
+		process_article(cl, cl->cl_buffer);
+		cl->cl_buffer = xcalloc(1, sizeof(*cl->cl_buffer));
+		TAILQ_INIT(cl->cl_buffer);
 	}
 }
 
@@ -343,7 +349,7 @@ client_handle_line(cl, line)
 
 		client_printf(cl, "500 Unknown command.\r\n");
 	} else if (cl->cl_state == CS_TAKETHIS || cl->cl_state == CS_IHAVE) {
-	artbuf_t	*buf = TAILQ_LAST(&cl->cl_buffer, artbuf_list);
+	artbuf_t	*buf = TAILQ_LAST(cl->cl_buffer, artbuf_list);
 
 		if (strcmp(line, ".") == 0) {
 			cl->cl_last_was_dot = 1;
@@ -479,7 +485,9 @@ client_t	*cl;
 	cl = xcalloc(1, sizeof(*cl));
 	cl->cl_stream = stream;
 	cl->cl_state = CS_WAIT_COMMAND;
-	TAILQ_INIT(&cl->cl_buffer);
+	cl->cl_buffer = xcalloc(1, sizeof(*cl->cl_buffer));
+	TAILQ_INIT(cl->cl_buffer);
+	TAILQ_INIT(&cl->cl_msglist);
 	return cl;
 }
 
@@ -540,17 +548,25 @@ client_destroy(udata)
 {
 client_t	*client = udata;
 artbuf_t	*buf;
+msglist_t	*msg;
 
 	if (client->cl_server) {
 		--client->cl_server->se_nconns;
 		SIMPLEQ_REMOVE(&client->cl_server->se_clients, client, client, cl_list);
 	}
 
-	while (buf = TAILQ_FIRST(&client->cl_buffer)) {
-		TAILQ_REMOVE(&client->cl_buffer, buf, ab_list);
+	while (buf = TAILQ_FIRST(client->cl_buffer)) {
+		TAILQ_REMOVE(client->cl_buffer, buf, ab_list);
 		free(buf->ab_msgid);
 		free(buf->ab_text);
 		free(buf);
+	}
+	free(client->cl_buffer);
+
+	while (msg = TAILQ_FIRST(&client->cl_msglist)) {
+		TAILQ_REMOVE(&client->cl_msglist, msg, ml_list);
+		free(msg->ml_msgid);
+		free(msg);
 	}
 
 	pending_remove_client(client);

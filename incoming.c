@@ -18,11 +18,11 @@
 #include	"emp.h"
 
 typedef struct incoming_work {
-	artbuf_t	*iw_artbuf;
-	int		 iw_status;
+	artbuf_list_t	*iw_artbuf;
+	client_t	*iw_client;
 } incoming_work_t;
 
-static int	 handle_one_article(incoming_work_t *);
+static int	 handle_one_article(artbuf_t *);
 
 static void	 on_new_work(uv_work_t *);
 static void	 on_work_done(uv_work_t *, status);
@@ -43,19 +43,20 @@ on_new_work(req)
 	uv_work_t	*req;
 {
 incoming_work_t	*iw = req->data;
+artbuf_t	*buf;
 
-	iw->iw_status = handle_one_article(iw);
+	TAILQ_FOREACH(buf, iw->iw_artbuf, ab_list)
+		buf->ab_status = handle_one_article(buf);
 }
 
 static int
-handle_one_article(iw)
-	incoming_work_t	*iw;
+handle_one_article(buf)
+	artbuf_t	*buf;
 {
 time_t		 age, oldest;
 article_t	*article;
 int		 filter_result;
 char		*filter_name;
-artbuf_t	*buf = iw->iw_artbuf;
 
 	if ((article = article_parse(buf->ab_text)) == NULL) {
 		client_log(LOG_NOTICE, buf->ab_client,
@@ -124,13 +125,15 @@ artbuf_t	*buf = iw->iw_artbuf;
 }
 
 void
-process_article(artbuf)
-	artbuf_t	*artbuf;
+process_article(client, artbuf)
+	client_t	*client;
+	artbuf_list_t	*artbuf;
 {
 incoming_work_t	*iw = xcalloc(1, sizeof(*iw));
 uv_work_t	*req = xcalloc(1, sizeof(*req));
 
 	iw->iw_artbuf = artbuf;
+	iw->iw_client = client;
 	req->data = iw;
 
 	uv_queue_work(loop, req, on_new_work, on_work_done);
@@ -142,7 +145,7 @@ on_work_done(req, status)
 {
 incoming_work_t	*iw = req->data;
 
-	client_incoming_reply(iw->iw_artbuf->ab_client, iw->iw_artbuf, iw->iw_status);
+	client_incoming_reply(iw->iw_client, iw->iw_artbuf);
 	free(iw);
 	free(req);
 }

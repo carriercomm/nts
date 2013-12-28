@@ -44,7 +44,7 @@ artbuf_t	*buf;
 	buf->ab_client = client;
 	buf->ab_type = AB_TAKETHIS;
 
-	TAILQ_INSERT_TAIL(&client->cl_buffer, buf, ab_list);
+	TAILQ_INSERT_TAIL(client->cl_buffer, buf, ab_list);
 	client->cl_state = CS_TAKETHIS;
 }
 
@@ -53,7 +53,8 @@ client_takethis_done(client)
 	client_t	*client;
 {
 int		 rejected = (client->cl_state == CS_TAKETHIS) ? 439 : 437;
-artbuf_t	*buf = TAILQ_LAST(&client->cl_buffer, artbuf_list);
+artbuf_t	*buf = TAILQ_LAST(client->cl_buffer, artbuf_list);
+msglist_t	*msg;
 
 #if 0
 	pending_remove(client->cl_msgid);
@@ -82,13 +83,17 @@ artbuf_t	*buf = TAILQ_LAST(&client->cl_buffer, artbuf_list);
 	if (DEBUG(CIO))
 		client_log(LOG_DEBUG, client, "takethis_done; process_article");
 
-	process_article(buf);
 	++client->cl_nbuffered;
 	client->cl_state = CS_WAIT_COMMAND;
+
+	msg = xcalloc(1, sizeof(*msg));
+	msg->ml_msgid = xstrdup(buf->ab_msgid);
+	msg->ml_type = AB_TAKETHIS;
+	TAILQ_INSERT_TAIL(&client->cl_msglist, msg, ml_list);
 	return;
 
 err:
-	TAILQ_REMOVE(&client->cl_buffer, buf, ab_list);
+	TAILQ_REMOVE(client->cl_buffer, buf, ab_list);
 	free(buf->ab_text);
 	free(buf->ab_msgid);
 	free(buf);
@@ -97,36 +102,57 @@ err:
 }
 
 void
-client_incoming_reply(cl, buf, reason)
+client_incoming_reply(cl, bufs)
 	client_t	*cl;
-	artbuf_t	*buf;
+	artbuf_list_t	*bufs;
 {
+artbuf_t	*buf;
 
 	if (DEBUG(CIO))
 		client_log(LOG_DEBUG, cl, "got process reply");
 
 	if (cl->cl_flags & (CL_DEAD | CL_DRAIN)) {
-		if (--cl->cl_nbuffered == 0)
-			client_destroy(cl);
+		TAILQ_FOREACH(buf, bufs, ab_list) {
+			if (--cl->cl_nbuffered == 0) {
+				client_destroy(cl);
+				break;
+			}
+		}
+
+		free(bufs);
 		return;
 	}
 
-	if (cl->cl_nbuffered == 1) {
-		if (reason == IN_OK)
-			client_printf(cl, "%d %s\r\n",
-				      (buf->ab_type == AB_TAKETHIS) ? 239 : 235,
-				      buf->ab_msgid);
-		else
-			client_printf(cl, "%d %s\r\n",
-				      (buf->ab_type == AB_TAKETHIS) ? 339 : 437,
-				      buf->ab_msgid);
+	TAILQ_FOREACH(buf, bufs, ab_list) {
+	msglist_t	*msg;
+
+		if (cl->cl_nbuffered == 1) {
+			if (buf->ab_status == IN_OK)
+				client_printf(cl, "%d %s\r\n",
+					      (buf->ab_type == AB_TAKETHIS) ? 239 : 235,
+					      buf->ab_msgid);
+			else
+				client_printf(cl, "%d %s\r\n",
+					      (buf->ab_type == AB_TAKETHIS) ? 339 : 437,
+					      buf->ab_msgid);
+		}
+
+		msg = TAILQ_FIRST(&cl->cl_msglist);
+		TAILQ_REMOVE(&cl->cl_msglist, msg, ml_list);
+		free(msg->ml_msgid);
+		free(msg);
+
+		--cl->cl_nbuffered;
 	}
 
-	--cl->cl_nbuffered;
+	while (buf = TAILQ_FIRST(bufs)) {
+		free(buf->ab_msgid);
+		free(buf->ab_text);
+		free(buf);
+		TAILQ_REMOVE(bufs, buf, ab_list);
+	}
 
-	TAILQ_REMOVE(&cl->cl_buffer, buf, ab_list);
-	free(buf->ab_msgid);
-	free(buf->ab_text);
-	free(buf);
+	free(bufs);
+
 	client_unpause(cl);
 }
