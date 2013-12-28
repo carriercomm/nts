@@ -43,8 +43,6 @@ typedef struct charq {
 #define	cq_first_ent(cq)	(TAILQ_FIRST(&(cq)->cq_ents))
 #define	cq_last_ent(cq)		(TAILQ_LAST(&(cq)->cq_ents, charq_ent_list))
 
-void	 cq_init(void);
-
 charq_t	*cq_new(void);
 void	 cq_free(charq_t *);
 

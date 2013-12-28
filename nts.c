@@ -161,7 +161,6 @@ char		*s;
 	arc4random();
 
 	article_init();
-	cq_init();
 
 	while ((c = getopt(argc, argv, "M:Vc:p:nx:yD:")) != -1) {
 		switch (c) {

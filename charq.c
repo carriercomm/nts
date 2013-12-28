@@ -19,11 +19,6 @@
 #include	"charq.h"
 #include	"nts.h"
 
-void
-cq_init()
-{
-}
-
 charq_t *
 cq_new()
 {
