@@ -58,21 +58,18 @@ int	err;
 	time(&start_time);
 
 	if (err = uv_pipe_init(loop, &ctl_sock, 0)) {
-		nts_log(LOG_ERR, "ctl: \"%s\": %s",
-			path, uv_strerror(err));
+		nts_log("ctl: \"%s\": %s", path, uv_strerror(err));
 		return -1;
 	}
 
 	(void) unlink(path);
 	if (err = uv_pipe_bind(&ctl_sock, path)) {
-		nts_log(LOG_ERR, "ctl: \"%s\": %s",
-			path, uv_strerror(err));
+		nts_log("ctl: \"%s\": %s", path, uv_strerror(err));
 		return -1;
 	}
 
 	if (err = uv_listen((uv_stream_t *) &ctl_sock, 16, on_ctl_connect)) {
-		nts_log(LOG_ERR, "ctl: \"%s\": %s",
-			path, uv_strerror(err));
+		nts_log("ctl: \"%s\": %s", path, uv_strerror(err));
 		return -1;
 	}
 
@@ -89,13 +86,13 @@ int		 err;
 
 	sock = xcalloc(1, sizeof(*sock));
 	if (err = uv_pipe_init(loop, sock, 0)) {
-		nts_log(LOG_ERR, "ctl: accept: %s", uv_strerror(err));
+		nts_log("ctl: accept: %s", uv_strerror(err));
 		free(sock);
 		return;
 	}
 
 	if (err = uv_accept(server, (uv_stream_t *) sock)) {
-		nts_log(LOG_ERR, "ctl: accept: %s", uv_strerror(err));
+		nts_log("ctl: accept: %s", uv_strerror(err));
 		free(sock);
 		return;
 	}

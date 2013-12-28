@@ -386,7 +386,7 @@ vpanic(fmt, ap)
 	char const	*fmt;
 	va_list		 ap;
 {
-	nts_vlog(LOG_CRIT, fmt, ap);
+	nts_vlog(fmt, ap);
 	log_shutdown();
 	abort();
 	exit(1);

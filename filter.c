@@ -135,8 +135,8 @@ conf_val_t	*val;
 				SIMPLEQ_INSERT_TAIL(&fg->fg_filters, fle2, fle_list);
 			}
 		} else
-			nts_log(LOG_ERR, "\"%s\", line %d: undefined filter \"%s\"",
-					opt->co_file, opt->co_lineno, val->cv_string);
+			nts_log("\"%s\", line %d: undefined filter \"%s\"",
+				opt->co_file, opt->co_lineno, val->cv_string);
 
 	}
 }
@@ -192,8 +192,8 @@ char		*s = opt->co_value->cv_string;
 	else if (strcmp(s, "permit") == 0)
 		fi->fi_flags |= FILTER_ACT_PERMIT;
 	else
-		nts_log(LOG_ERR, "\"%s\", line %d: unknown filter action \"%s\"",
-				opt->co_file, opt->co_lineno, s);
+		nts_log("\"%s\", line %d: unknown filter action \"%s\"",
+			opt->co_file, opt->co_lineno, s);
 }
 
 void
@@ -220,7 +220,7 @@ conf_val_t	*val;
 		else if (strcmp(s, "html") == 0)
 			fi->fi_art_types |= ART_TYPE_HTML;
 		else
-			nts_log(LOG_ERR, "\"%s\", line %d: unknown article type \"%s\"",
+			nts_log("\"%s\", line %d: unknown article type \"%s\"",
 				opt->co_file, opt->co_lineno, s);
 	}
 }
@@ -435,7 +435,7 @@ filter_list_entry_t	*fle;
 		case FILTER_ACT_DENY:
 			if (fname) {
 				if (fi->fi_flags & FILTER_LOG_REJECTED)
-					nts_log(LOG_INFO, "%s: article %s rejected by filter/%s",
+					nts_log("%s: article %s rejected by filter/%s",
 						client, art->art_msgid, fi->fi_name);
 				*fname = fi->fi_name;
 			}

@@ -102,14 +102,14 @@ emp_run()
 {
 	if (do_emp_tracking) {
 		if ((emp_db = db_open("emp.db", DB_HASH, 0, DB_CREATE | DB_AUTO_COMMIT, NULL)) == NULL) {
-			nts_log(LOG_CRIT, "emp: EMP database open failed");
+			nts_log("emp: EMP database open failed");
 			return -1;
 		}
 
 		if ((emp_last_decayed_db = db_open("emp_last_decayed_idx.db", 
 				DB_BTREE, DB_DUP, DB_CREATE | DB_AUTO_COMMIT,
 				emp_compare_last_decayed)) == NULL) {
-			nts_log(LOG_CRIT, "emp: EMP last seen index open failed");
+			nts_log("emp: EMP last seen index open failed");
 			return -1;
 		}
 
@@ -120,14 +120,14 @@ emp_run()
 	if (do_phl_tracking) {
 		if ((phl_db = db_open("phl.db", DB_HASH, 0,
 				DB_CREATE | DB_AUTO_COMMIT, NULL)) == NULL) {
-			nts_log(LOG_CRIT, "emp: Posting-Host/Lines (PHL) database open failed");
+			nts_log("emp: Posting-Host/Lines (PHL) database open failed");
 			return -1;
 		}
 
 		if ((phl_last_decayed_db = db_open("phl_last_decayed_idx.db",
 				DB_BTREE, DB_DUP, DB_CREATE | DB_AUTO_COMMIT,
 				phl_compare_last_decayed)) == NULL) {
-			nts_log(LOG_CRIT, "emp: Posting-Host/Lines (PHL) last seen index open failed");
+			nts_log("emp: Posting-Host/Lines (PHL) last seen index open failed");
 			return -1;
 		}
 
@@ -632,8 +632,8 @@ char	*s = opt->co_value->cv_string;
 	else if (strcmp(s, "sbi") == 0)
 		emp_index_method = I_SBI;
 	else
-		nts_log(LOG_ERR, "\"%s\", line %d: unknown index method \"%s\"",
-				opt->co_file, opt->co_lineno, s);
+		nts_log("\"%s\", line %d: unknown index method \"%s\"",
+			opt->co_file, opt->co_lineno, s);
 }
 
 static void

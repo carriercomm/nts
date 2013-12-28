@@ -10,6 +10,7 @@
 
 #include	"client.h"
 #include	"log.h"
+#include	"clientmsg.h"
 
 void
 c_quit(client, cmd, line)
@@ -22,7 +23,7 @@ c_quit(client, cmd, line)
 	}
 
 	if (log_incoming_connections)
-		client_log(LOG_INFO, client, "disconnected (QUIT)");
+		client_logm(CLIENT_fac, M_CLIENT_DISCQUIT, client);
 
 	client_printf(client, "205 Closing connection.\r\n");
 	client->cl_state = CS_DEAD;

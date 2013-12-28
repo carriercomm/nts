@@ -31,12 +31,12 @@ rfcheck(rf)
 		     osize > rf->rf_stat.st_size))) {
 		FILE	*nfile;
 			if ((nfile = fopen(rf->rf_name, "a")) == NULL) {
-				nts_log(LOG_ERR, "%s: cannot re-open: %s",
+				nts_log("%s: cannot re-open: %s",
 					rf->rf_name, strerror(errno));
 			} else {
 				fclose(rf->rf_file);
 				rf->rf_file = nfile;
-				nts_log(LOG_INFO, "\"%s\": rotated",
+				nts_log("\"%s\": rotated",
 					rf->rf_name);
 			}
 
@@ -82,8 +82,8 @@ rfile_t	*rf;
 	rf->rf_file = f;
 
 	if (fstat(fileno(f), &rf->rf_stat) == -1) {
-		nts_log(LOG_ERR, "\"%s\": cannot fstat: %s",
-				path, strerror(errno));
+		nts_log("\"%s\": cannot fstat: %s",
+			path, strerror(errno));
 		free(rf);
 		fclose(f);
 		return NULL;

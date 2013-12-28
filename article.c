@@ -56,7 +56,7 @@ size_t		 m;
 		free(article->art_content);
 		free(article);
 		free(otext);
-		nts_log(LOG_INFO, "received empty article?");
+		nts_log("received empty article?");
 		return NULL;
 	}
 
@@ -68,7 +68,7 @@ size_t		 m;
 			break;
 
 		if ((p = index(line, ':')) == NULL) {
-			nts_log(LOG_INFO, "article without colon in header: [%s]", line);
+			nts_log("article without colon in header: [%s]", line);
 			goto err;
 		}
 
@@ -145,38 +145,33 @@ size_t		 m;
 	text = otext = line = NULL;
 
 	if (article->art_msgid == NULL) {
-		nts_log(LOG_NOTICE, "received article has no Message-ID: header");
+		nts_log("received article has no Message-ID: header");
 		goto err;
 	}
 
 	if (article->art_path == NULL) {
-		nts_log(LOG_NOTICE, "%s: article has no Path: header",
-				article->art_msgid);
+		nts_log("%s: article has no Path: header", article->art_msgid);
 		goto err;
 	}
 
 	if (article->art_newsgroups == NULL) {
-		nts_log(LOG_NOTICE, "%s: article has no Newsgroups: header",
-				article->art_msgid);
+		nts_log("%s: article has no Newsgroups: header", article->art_msgid);
 		goto err;
 	}
 
 	if (article->art_date <= 0) {
-		nts_log(LOG_NOTICE, "%s: invalid Date: header",
-				article->art_msgid);
+		nts_log("%s: invalid Date: header", article->art_msgid);
 		goto err;
 	}
 
 	m = strlen(article->art_msgid);
 	if (m < 3 || m > 250) {
-		nts_log(LOG_NOTICE, "%s: invalid message-id",
-				article->art_msgid);
+		nts_log("%s: invalid message-id", article->art_msgid);
 		goto err;
 	}
 
 	if ((p = strstr(article->art_content, "\r\n\r\n")) == NULL) {
-		nts_log(LOG_NOTICE, "%s: article has no body",
-				article->art_msgid);
+		nts_log("%s: article has no body", article->art_msgid);
 		goto err;
 	}
 
@@ -239,7 +234,7 @@ path_ent_t	*pe;
 size_t		 n;
 
 	if ((body = strstr(art->art_content, "\r\n\r\n")) == NULL) {
-		nts_log(LOG_NOTICE, "%s: article has no body?", art->art_msgid);
+		nts_log("%s: article has no body?", art->art_msgid);
 		return;
 	}
 
@@ -249,7 +244,7 @@ size_t		 n;
 		path = strstr(art->art_content, "\r\nPath:");
 
 		if (path == NULL || path > body) {
-			nts_log(LOG_NOTICE, "%s: article has no Path: header?", art->art_msgid);
+			nts_log("%s: article has no Path: header?", art->art_msgid);
 			return;
 		}
 

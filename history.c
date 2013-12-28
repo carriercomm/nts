@@ -20,6 +20,7 @@
 #include	"log.h"
 #include	"database.h"
 #include	"nts.h"
+#include	"historymsg.h"
 
 static int	 history_get_msgid(DB *, DBT const *, DBT const *, DBT *);
 static void	 history_clean(uv_work_t *);
@@ -53,54 +54,48 @@ history_run()
 int	ret;
 
 	if (ret = db_create(&history_db, db_env, 0)) {
-		nts_log(LOG_ERR, "history: cannot create database handle: %s",
-			db_strerror(ret));
+		nts_logm(HISTORY_fac, M_HISTORY_HDLERR, db_strerror(ret));
 		return -1;
 	}
 
 	/* 250 = msg-id; 8 = timestamp */
 	if (ret = history_db->set_re_len(history_db, 250 + 8)) {
-		nts_log(LOG_ERR, "history: cannot set record length: %s",
-			db_strerror(ret));
+		nts_logm(HISTORY_fac, M_HISTORY_RLNFAIL, db_strerror(ret));
 		return -1;
 	}
 
 	if (ret = history_db->set_re_pad(history_db, '\0')) {
-		nts_log(LOG_ERR, "history: cannot set pad: %s",
-			db_strerror(ret));
+		nts_logm(HISTORY_fac, M_HISTORY_PADFAIL, db_strerror(ret));
 		return -1;
 	}
 
 	if (ret = history_db->set_q_extentsize(history_db, 262144000)) {
-		nts_log(LOG_ERR, "history: cannot set extent size: %s",
-			db_strerror(ret));
+		nts_logm(HISTORY_fac, M_HISTORY_EXTNFAIL, db_strerror(ret));
 		return -1;
 	}
 
 	if (ret = history_db->open(history_db, NULL, "history.db", NULL,
 			DB_QUEUE, DB_CREATE | DB_AUTO_COMMIT, 0600)) {
-		nts_log(LOG_ERR, "history: cannot open database: %s",
-			db_strerror(ret));
+		nts_logm(HISTORY_fac, M_HISTORY_OPNFAIL,
+			 "history.db", db_strerror(ret));
 		return -1;
 	}
 
 	if (ret = db_create(&history_by_msgid, db_env, 0)) {
-		nts_log(LOG_ERR, "history: cannot create msgid database handle: %s",
-			db_strerror(ret));
+		nts_logm(HISTORY_fac, M_HISTORY_HDLERR, db_strerror(ret));
 		return -1;
 	}
 
 	if (ret = history_by_msgid->open(history_by_msgid, NULL, "history_msgid.idx", NULL,
 			DB_HASH, DB_CREATE | DB_AUTO_COMMIT, 0600)) {
-		nts_log(LOG_ERR, "history: cannot open msgid database: %s",
-			db_strerror(ret));
+		nts_logm(HISTORY_fac, M_HISTORY_OPNFAIL,
+			 "history_msgid.idx", db_strerror(ret));
 		return -1;
 	}
 
 	if (ret = history_db->associate(history_db, NULL, history_by_msgid, 
 					history_get_msgid, DB_AUTO_COMMIT)) {
-		nts_log(LOG_ERR, "history: cannot associate msgid database: %s",
-			db_strerror(ret));
+		nts_logm(HISTORY_fac, M_HISTORY_ASSCFAIL, db_strerror(ret));
 		return -1;
 	}
 
@@ -396,7 +391,7 @@ deadlock:	;
 	}
 
 	free(delkeys.data);
-	nts_log(LOG_INFO, "history: expired %lu entries", (long unsigned) expired);
+	nts_logm(HISTORY_fac, M_HISTORY_EXPIRED, (unsigned long) expired);
 
 	return;
 }

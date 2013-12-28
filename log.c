@@ -22,6 +22,7 @@
 #include	"config.h"
 #include	"nts.h"
 #include	"rfile.h"
+#include	"logmsg.h"
 
 static enum {
 	L_STDOUT,
@@ -88,24 +89,27 @@ log_run(void)
 		break;
 
 	case L_FILE:
-		if ((logfile = rfopen(logfile_name, "a")) == NULL)
-			panic("log: %s: cannot open: %s",
-					logfile_name, strerror(errno));
+		if ((logfile = rfopen(logfile_name, "a")) == NULL) {
+			nts_logm(LOG_fac, M_LOG_OPNFAIL,
+				 logfile_name, strerror(errno));
+			return -1;
+		}
+
 		break;
 	}
 
 	if (incoming_log_name) {
 		if ((incoming_log = rfopen(incoming_log_name, "a")) == NULL) {
-			nts_log(LOG_CRIT, "cannot open incoming log %s: %s",
-					incoming_log_name, strerror(errno));
+			nts_logm(LOG_fac, M_LOG_INCFAIL,
+				 incoming_log_name, strerror(errno));
 			return -1;
 		}
 	}
 
 	if (path_log_name) {
 		if ((path_log = rfopen(path_log_name, "a")) == NULL) {
-			nts_log(LOG_CRIT, "cannot open path log %s: %s",
-					path_log_name, strerror(errno));
+			nts_logm(LOG_fac, M_LOG_PATHFAIL,
+				 path_log_name, strerror(errno));
 			return -1;
 		}
 	}
@@ -114,11 +118,11 @@ log_run(void)
 }
 
 void
-nts_log(int sev, char const *fmt, ...)
+nts_log(char const *fmt, ...)
 {
 va_list	ap;
 	va_start(ap, fmt);
-	nts_vlog(sev, fmt, ap);
+	nts_vlog(fmt, ap);
 	va_end(ap);
 }
 
@@ -132,7 +136,7 @@ va_list	ap;
 }
 
 void
-nts_vlog(sev, fmt, ap)
+nts_vlog(fmt, ap)
 	char const	*fmt;
 	va_list		 ap;
 {
@@ -148,7 +152,7 @@ int	 len;
 
 	switch (log_target) {
 	case L_SYSLOG:
-		syslog(sev, "%s", r);
+		syslog(LOG_INFO, "%s", r);
 		break;
 
 	case L_STDOUT:
@@ -157,29 +161,17 @@ int	 len;
 	time_t		 now;
 	struct tm	*tm;
 	char		 tbuf[128];
-	char const	*sevs;
 
 		time(&now);
 		tm = localtime(&now);
 		strftime(tbuf, sizeof(tbuf), "%b %d %H:%M:%S", tm);
 
-		switch (sev) {
-		case LOG_EMERG:		sevs = " EMERG:    "; break;
-		case LOG_ALERT:		sevs = " ALERT:    "; break;
-		case LOG_CRIT:		sevs = " CRITICAL: "; break;
-		case LOG_ERR:		sevs = " ERROR:    "; break;
-		case LOG_WARNING:	sevs = " WARNING:  "; break;
-		case LOG_NOTICE:	sevs = " NOTICE:   "; break;
-		case LOG_INFO:		sevs = " INFO:     "; break;
-		case LOG_DEBUG:		sevs = " DEBUG:    "; break;
-		}
-
 		if (logfile) {
 			rfcheck(logfile);
-			rfprintf(logfile, "%s%s%s\n", tbuf, sevs, r);
+			rfprintf(logfile, "%s%s\n", tbuf, r);
 			rfflush(logfile);
 		} else {
-			printf("%s%s%s\n", tbuf, sevs, r);
+			printf("%s %s\n", tbuf, r);
 		}
 		break;
 	}

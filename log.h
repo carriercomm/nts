@@ -23,8 +23,8 @@ int	log_init(void);
 int	log_run(void);
 void	log_shutdown(void);
 
-void	nts_log(int sev, char const *fmt, ...) attr_printf(2, 3);
-void	nts_vlog(int sev, char const *fmt, va_list ap);
+void	nts_log(char const *fmt, ...) attr_printf(1, 2);
+void	nts_vlog(char const *fmt, va_list ap);
 
 void	nts_logm(msg_t fac[], int msg, ...);
 void	nts_vlogm(msg_t fac[], int msg, va_list ap);

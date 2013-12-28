@@ -28,6 +28,7 @@
 #include	"queue.h"
 #include	"filter.h"
 #include	"charq.h"
+#include	"msg.h"
 
 struct server;
 struct article;
@@ -144,6 +145,7 @@ void	client_incoming_reply(client_t *, artbuf_list_t *);
 void	 client_printf(client_t *, char const *, ...);
 void	 client_log(int sev, client_t *, char const *, ...)
 			attr_printf(3, 4);
+void	 client_logm(msg_t fac[], int msg, client_t *, ...);
 
 extern	config_schema_stanza_t listen_stanza;
 int	client_listen(void);

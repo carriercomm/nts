@@ -18,6 +18,7 @@
 #include	"nts.h"
 #include	"log.h"
 #include	"crypt.h"
+#include	"authmsg.h"
 
 static char	*auth_pwfile;
 int		 auth_enabled;
@@ -124,8 +125,8 @@ char	 line_[1024];
 int	 lineno = 0;
 
 	if ((f = fopen(auth_pwfile, "r")) == NULL) {
-		nts_log(LOG_ERR, "auth: \"%s\": %s",
-				auth_pwfile, strerror(errno));
+		nts_logm(AUTH_fac, M_AUTH_OPNFAIL,
+			 auth_pwfile, strerror(errno));
 		return;
 	}
 
@@ -145,8 +146,8 @@ int	 lineno = 0;
 
 		if ((username = next_any(&line, ":")) == NULL ||
 		    (inpw = next_any(&line, ":")) == NULL) {
-			nts_log(LOG_ERR, "auth: \"%s\", line %d: syntax error",
-					auth_pwfile, lineno);
+			nts_logm(AUTH_fac, M_AUTH_PARSERR,
+				 auth_pwfile, lineno);
 			return;
 		}
 
@@ -222,6 +223,6 @@ conf_val_t	*nr = opt->co_value->cv_next;
 	} else if (strcmp(h, "md5") == 0)
 		default_algo = H_MD5;
 	else
-		nts_log(LOG_ERR, "\"%s\", line %d: unknown hash algorithm \"%s\"",
-				opt->co_file, opt->co_lineno, h);
+		nts_logm(AUTH_fac, M_AUTH_UNKHASH, 
+			 opt->co_file, opt->co_lineno, h);
 }

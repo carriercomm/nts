@@ -87,3 +87,23 @@ The listener subsystem was unable to start because of previous
 configuration errors.  Consult previous message for the error(s) and
 fix them.
 .
+
+CONNECT	I	client connected
+A new client has connected to the server.
+.
+
+DISCEOF	I	disconnected (EOF)
+A client closed the TCP connection to the server without sending a QUIT
+command.  This is normal behaviour for some feeders.
+.
+
+DISCERR	I	disconnected (read error: %2$s)
+NTS encountered an error when trying to read data from a client.  This
+might indicate either a network problem, or a problem with the remote
+client.
+.
+
+DISCQUIT	I	disconnected (QUIT)
+A client disconnected normally, by sending a QUIT command.
+.
+

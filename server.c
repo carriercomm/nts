@@ -178,7 +178,7 @@ int		 ret;
 
 			if (ret = uv_getaddrinfo(loop, req, on_server_dns_done,
 						 addr->hl_host, NULL, &hints)) {
-				nts_log(LOG_ERR, "peer \"%s\": cannot resolve \"%s\": %s",
+				nts_log("peer \"%s\": cannot resolve \"%s\": %s",
 					se->se_name, addr->hl_host, uv_strerror(ret));
 				free(req);
 				continue;
@@ -253,7 +253,7 @@ hostlist_entry_t	*addr;
 
 			if (ret = uv_getaddrinfo(loop, req, on_server_dns_done,
 						 addr->hl_host, NULL, &hints)) {
-				nts_log(LOG_ERR, "peer \"%s\": cannot resolve \"%s\": %s",
+				nts_log("peer \"%s\": cannot resolve \"%s\": %s",
 					se->se_name, addr->hl_host, uv_strerror(ret));
 				free(req);
 				continue;
@@ -275,8 +275,8 @@ server_t	*server;
 	if (stz->cs_title) {
 		server->se_name = xstrdup(stz->cs_title);
 	} else if (default_server) {
-		nts_log(LOG_ERR, "\"%s\", line %d: default peer already "
-				"specified", stz->cs_file, stz->cs_lineno);
+		nts_log("\"%s\", line %d: default peer already "
+			"specified", stz->cs_file, stz->cs_lineno);
 	} else
 		default_server = server;
 
@@ -384,7 +384,7 @@ server_t	*se = req->data;
 	assert(se->se_resolving);
 
 	if (status) {
-		nts_log(LOG_ERR, "error resolving accept-from address for "
+		nts_log("error resolving accept-from address for "
 			"\"%s\": %s", se->se_name, uv_strerror(status));
 		return;
 	}
@@ -493,8 +493,8 @@ conf_val_t	*val;
 				fle->fle_filter->fi_flags |= FILTER_USED;
 			}
 		} else {
-			nts_log(LOG_ERR, "\"%s\", line %d: undefined filter \"%s\"",
-					opt->co_file, opt->co_lineno, val->cv_string);
+			nts_log("\"%s\", line %d: undefined filter \"%s\"",
+				opt->co_file, opt->co_lineno, val->cv_string);
 		}
 	}
 }
@@ -543,8 +543,8 @@ conf_val_t	*val;
 				fle->fle_filter->fi_flags |= FILTER_USED;
 			}
 		} else {
-			nts_log(LOG_ERR, "\"%s\", line %d: undefined filter \"%s\"",
-					opt->co_file, opt->co_lineno, val->cv_string);
+			nts_log("\"%s\", line %d: undefined filter \"%s\"",
+				opt->co_file, opt->co_lineno, val->cv_string);
 		}
 	}
 }
@@ -557,7 +557,7 @@ peer_set_host(stz, opt, udata, arg)
 {
 server_t	*se = udata;
 	if (se == default_server) {
-		nts_log(LOG_ERR, "\"%s\", line %d: \"host\" cannot be "
+		nts_log("\"%s\", line %d: \"host\" cannot be "
 			"specified for the default peer",
 			opt->co_file, opt->co_lineno);
 		return;
@@ -574,7 +574,7 @@ peer_set_send_to(stz, opt, udata, arg)
 server_t	*server = udata;
 
 	if (server == default_server) {
-		nts_log(LOG_ERR, "\"%s\", line %d: \"send-to\" cannot be "
+		nts_log("\"%s\", line %d: \"send-to\" cannot be "
 			"specified for the default peer",
 			opt->co_file, opt->co_lineno);
 		return;
@@ -593,7 +593,7 @@ server_t	*server = udata;
 conf_val_t	*val;
 
 	if (server == default_server) {
-		nts_log(LOG_ERR, "\"%s\", line %d: \"accept-from\" cannot be "
+		nts_log("\"%s\", line %d: \"accept-from\" cannot be "
 			"specified for the default peer",
 			opt->co_file, opt->co_lineno);
 		return;
@@ -646,7 +646,7 @@ conf_val_t	*val;
 server_t	*se = udata;
 
 	if (se == default_server) {
-		nts_log(LOG_ERR, "\"%s\", line %d: \"exclude\" cannot be "
+		nts_log("\"%s\", line %d: \"exclude\" cannot be "
 			"specified for the default peer",
 			opt->co_file, opt->co_lineno);
 		return;
@@ -673,8 +673,8 @@ server_t	*se = udata;
 	for (val = opt->co_value; val; val = val->cv_next) {
 	int	ret;
 		if (ret = getaddrinfo(val->cv_string, NULL, &hints, &res)) {
-			nts_log(LOG_ERR, "\"%s\", line %d: cannot resolve: %s",
-					opt->co_file, opt->co_lineno,
+			nts_log("\"%s\", line %d: cannot resolve: %s",
+				opt->co_file, opt->co_lineno,
 					gai_strerror(ret));
 			return;
 		}
@@ -712,9 +712,9 @@ int		 ret;
 	hints.ai_family = AF_INET;
 
 	if (ret = getaddrinfo(opt->co_value->cv_string, NULL, &hints, &res)) {
-		nts_log(LOG_ERR, "\"%s\", line %d: cannot resolve: %s",
-				opt->co_file, opt->co_lineno,
-				gai_strerror(ret));
+		nts_log("\"%s\", line %d: cannot resolve: %s",
+			opt->co_file, opt->co_lineno,
+			gai_strerror(ret));
 		return;
 	}
 
@@ -738,9 +738,9 @@ int		 ret;
 	hints.ai_family = AF_INET6;
 
 	if (ret = getaddrinfo(opt->co_value->cv_string, NULL, &hints, &res)) {
-		nts_log(LOG_ERR, "\"%s\", line %d: cannot resolve: %s",
-				opt->co_file, opt->co_lineno,
-				gai_strerror(ret));
+		nts_log("\"%s\", line %d: cannot resolve: %s",
+			opt->co_file, opt->co_lineno,
+			gai_strerror(ret));
 		return;
 	}
 
@@ -960,10 +960,10 @@ DB              *db;
         /*      if (ret != DB_NOTFOUND)*/
         /*              panic("cannot remove backlog entry: %s",
                                         db_strerror(ret));*/
-                nts_log(LOG_WARNING, "cannot remove backlog entry %.8lX,%lu: %s",
-                                (long unsigned) qe->qe_pos.sp_id,
-                                (long unsigned) qe->qe_pos.sp_offset,
-                                db_strerror(ret));
+                nts_log("cannot remove backlog entry %.8lX,%lu: %s",
+			(long unsigned) qe->qe_pos.sp_id,
+			(long unsigned) qe->qe_pos.sp_offset,
+			db_strerror(ret));
         txn->commit(txn, 0);
 }
 

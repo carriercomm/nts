@@ -19,6 +19,7 @@
 #include	"config.h"
 #include	"nts.h"
 #include	"log.h"
+#include	"configmsg.h"
 
 static int conf_handle_stanza(conf_stanza_t *stz);
 
@@ -97,8 +98,7 @@ extern int	 yyparse(void);
 conf_stanza_t	*stanza;
 
 	if ((yyin = fopen(fname, "r")) == NULL) {
-		nts_log(LOG_CRIT, "cannot open configuration file \"%s\": %s",
-				fname, strerror(errno));
+		nts_logm(CONFIG_fac, M_CONFIG_OPNFAIL, fname, strerror(errno));
 		return -1;
 	}
 
@@ -154,8 +154,8 @@ conf_option_t		*opt;
 void			*udata = NULL;
 
 	if ((sstz = config_find_schema_stanza(stz->cs_name)) == NULL) {
-		nts_log(LOG_ERR, "\"%s\", line %d: unknown stanza \"%s\"",
-				stz->cs_file, stz->cs_lineno, stz->cs_name);
+		nts_logm(CONFIG_fac, M_CONFIG_UNKBLK,
+			 stz->cs_file, stz->cs_lineno, stz->cs_name);
 		return -1;
 	}
 
@@ -165,9 +165,9 @@ void			*udata = NULL;
 	for (opt = stz->cs_options; opt; opt = opt->co_next) {
 	config_schema_opt_t	*sopt;
 		if ((sopt = config_find_schema_opt(sstz, opt->co_name)) == NULL) {
-			nts_log(LOG_ERR, "\"%s\", line %d: unknown option \"%s::%s\"",
-					opt->co_file, opt->co_lineno,
-					stz->cs_name, opt->co_name);
+			nts_logm(CONFIG_fac, M_CONFIG_UNKOPT,
+				 opt->co_file, opt->co_lineno,
+				 stz->cs_name, opt->co_name);
 			return -1;
 		}
 		sopt->opt_handler(stz, opt, udata, sopt->opt_arg);
@@ -182,7 +182,7 @@ void
 yyerror(err)
 	char const	*err;
 {
-	nts_log(LOG_ERR, "\"%s\", line %d: %s", config_curfile, config_lineno, err);
+	nts_logm(CONFIG_fac, M_CONFIG_PARSERR, config_curfile, config_lineno, err);
 	longjmp(errjmp, 1);
 }
 

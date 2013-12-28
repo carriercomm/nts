@@ -197,7 +197,7 @@ int			addrlen = sizeof(addr);
 	uv_read_start((uv_stream_t *) stream, uv_alloc, on_client_read);
 
 	if (log_incoming_connections)
-		client_log(LOG_INFO, client, "client connected");
+		client_logm(CLIENT_fac, M_CLIENT_CONNECT, client);
 }
 
 static void
@@ -221,9 +221,9 @@ client_t	*cl = stream->data;
 	if (nread < 0) {
 		if (log_incoming_connections)
 			if (nread == UV_EOF)
-				client_log(LOG_INFO, cl, "disconnected (EOF)");
+				client_logm(CLIENT_fac, M_CLIENT_DISCEOF, cl);
 			else
-				client_log(LOG_INFO, cl, "disconnected (read error: %s)",
+				client_logm(CLIENT_fac, M_CLIENT_DISCERR, cl,
 					   uv_strerror(nread));
 		client_close(cl, 0);
 		free(buf->base);
@@ -389,10 +389,50 @@ int	len;
 		vsnprintf(r, len + 1, fmt, ap);
 	}
 
-	nts_log(sev, "%s: %s", client->cl_strname, r);
+	nts_log("%s: %s", client->cl_strname, r);
 
 	if (r != buf)
 		free(r);
+}
+
+void
+client_log(int sev, client_t *client, char const *fmt, ...)
+{
+va_list	ap;
+	va_start(ap, fmt);
+	client_vlog(sev, client, fmt, ap);
+	va_end(ap);
+}
+
+static void
+client_vlogm(msg_t fac[], int msg, client_t *client, va_list ap)
+{
+char		 buf[8192];
+char		*r = buf;
+int		 len;
+char const	*fmt = fac[msg].m_text;
+
+	len = vsnprintf(buf, sizeof(buf), fmt, ap);
+	if ((unsigned int) len >= sizeof (buf)) {
+		r = xmalloc(len + 1);
+		vsnprintf(r, len + 1, fmt, ap);
+	}
+
+	nts_log("%%%s-%c-%s, %s: %s",
+		fac[msg].m_subsys, fac[msg].m_sev,
+		fac[msg].m_code, client->cl_strname, r);
+
+	if (r != buf)
+		free(r);
+}
+
+void
+client_logm(msg_t fac[], int msg, client_t *client, ...)
+{
+va_list	ap;
+	va_start(ap, client);
+	client_vlogm(fac, msg, client, ap);
+	va_end(ap);
 }
 
 typedef struct client_write_req {
@@ -464,15 +504,6 @@ client_printf(client_t *client, char const *fmt, ...)
 va_list	ap;
 	va_start(ap, fmt);
 	client_vprintf(client, fmt, ap);
-	va_end(ap);
-}
-
-void
-client_log(int sev, client_t *client, char const *fmt, ...)
-{
-va_list	ap;
-	va_start(ap, fmt);
-	client_vlog(sev, client, fmt, ap);
 	va_end(ap);
 }
 

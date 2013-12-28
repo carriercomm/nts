@@ -143,7 +143,7 @@ uv_connect_t	*req;
 					 fe->fe_server->se_send_to,
 					 fe->fe_server->se_port,
 					 &hints)) {
-			nts_log(LOG_ERR, "feeder: %s: uv_getaddrinfo: %s",
+			nts_log("feeder: %s: uv_getaddrinfo: %s",
 				fe->fe_server->se_name, uv_strerror(ret));
 			time(&fe->fe_server->se_feeder_last_fail);
 			fconn_destroy(fc);
@@ -161,7 +161,7 @@ uv_connect_t	*req;
                         fc->fc_cur_addr->ai_addrlen,
                         host, sizeof(host), serv, sizeof(serv),
                         NI_NUMERICHOST | NI_NUMERICSERV)) {
-                nts_log(LOG_WARNING, "feeder: %s: getnameinfo failed: %s",
+                nts_log("feeder: %s: getnameinfo failed: %s",
                         fe->fe_server->se_name, gai_strerror(ret));
                 time(&fe->fe_server->se_feeder_last_fail);
                 fconn_destroy(fc);
@@ -737,7 +737,7 @@ int	len;
 		vsnprintf(r, len + 1, fmt, ap);
 	}
 
-	nts_log(sev, "feeder: %s: %s", fe->fe_server->se_name, r);
+	nts_log("feeder: %s: %s", fe->fe_server->se_name, r);
 
 	if (r != buf)
 		free(r);
@@ -778,7 +778,7 @@ int	len;
 		vsnprintf(r, len + 1, fmt, ap);
 	}
 
-	nts_log(sev, "feeder: %s%s: %s", fc->fc_feeder->fe_server->se_name, 
+	nts_log("feeder: %s%s: %s", fc->fc_feeder->fe_server->se_name, 
 			fc->fc_strname, r);
 
 	if (r != buf)
@@ -1139,7 +1139,7 @@ fconn_t		*fc = req->data;
 feeder_t        *fe = fc->fc_feeder;
 
         if (err) {
-                nts_log(LOG_ERR, "feeder: %s: cannot resolve: %s",
+                nts_log("feeder: %s: cannot resolve: %s",
                         fe->fe_server->se_name,
                         uv_strerror(err));
                 time(&fe->fe_server->se_feeder_last_fail);
