@@ -351,6 +351,7 @@ emp_score_art(art)
 	case I_BI2:	return (sqrt(art->art_ngroups) + art->art_ngroups) / 2;
 	case I_ACI:	return 3 + art->art_ngroups;
 	}
+	abort();
 }
 
 static int
