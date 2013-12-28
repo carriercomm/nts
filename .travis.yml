@@ -2,4 +2,4 @@ language: c
 compiler:
   - gcc
   - clang
-script: mkdir build && cd build && ../configure --prefix=$HOME/nts-install && make && make install
+script: sudo apt-get -y install libdb5.1-dev &&  mkdir build && cd build && ../configure --prefix=$HOME/nts-install && make && make install
