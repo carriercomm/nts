@@ -26,7 +26,7 @@ case $host_os in
 		UV_EXTRA_SRCS="freebsd.c kqueue.c"
 		;;
 	linux*)
-		CPPFLAGS="$CPPFLAGS -D_GNU_SOURCE"
+		CPPFLAGS="$CPPFLAGS -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64"
 		UV_EXTRA_SRCS="linux-core.c linux-inotify.c linux-syscalls.c proctitle.c"
 		;;
 	netbsd*)
@@ -36,7 +36,7 @@ case $host_os in
 		UV_EXTRA_SRCS="openbsd.c kqueue.c"
 		;;
 	solaris*)
-		CPPFLAGS="$CPPFLAGS -D__EXTENSIONS__ -D_XOPEN_SOURCE=500"
+		CPPFLAGS="$CPPFLAGS -D__EXTENSIONS__ -D_XOPEN_SOURCE=500 -D_FILE_OFFSET_BITS=64"
 		UV_EXTRA_SRCS="sunos.c"
 		;;
 	*)
@@ -50,6 +50,8 @@ AC_PROG_LEX
 AC_PROG_YACC
 AC_PROG_INSTALL
 AC_PROG_RANLIB
+
+AC_TYPE_UINT8_T
 
 # Libraries NTS uses
 AC_CHECK_LIB([socket], [socket])
