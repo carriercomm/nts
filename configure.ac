@@ -51,8 +51,6 @@ AC_PROG_YACC
 AC_PROG_INSTALL
 AC_PROG_RANLIB
 
-AC_TYPE_UINT8_T
-
 # Libraries NTS uses
 AC_CHECK_LIB([socket], [socket])
 AC_CHECK_LIB([rt], [clock_gettime])

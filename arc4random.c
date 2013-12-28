@@ -35,12 +35,13 @@
 #include	"setup.h"
 #ifndef	HAVE_ARC4RANDOM
 
-#include <sys/types.h>
-#include <sys/time.h>
-#include <stdlib.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <pthread.h>
+#include	<sys/types.h>
+#include	<sys/time.h>
+#include	<stdlib.h>
+#include	<fcntl.h>
+#include	<unistd.h>
+#include	<pthread.h>
+#include	<stdint.h>
 
 struct arc4_stream {
 	uint8_t i;
