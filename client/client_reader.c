@@ -156,7 +156,7 @@ uv_process_t		*proc;
 	child_stdio[1].flags = UV_INHERIT_STREAM;
 	child_stdio[1].data.stream = (uv_stream_t *) sock;
 	child_stdio[2].flags = UV_INHERIT_STREAM;
-	child_stdio[3].data.stream = (uv_stream_t *) sock;
+	child_stdio[2].data.stream = (uv_stream_t *) sock;
 
 	options.exit_cb = NULL;
 	options.file = reader_handler;
