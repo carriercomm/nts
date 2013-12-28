@@ -166,7 +166,7 @@ char		*line;
 	pos++;
 	line = xmalloc(pos + 1);
 	cq_extract_start(cq, line, pos);
-	line[pos] = 0;
+	line[pos - 1] = 0;
 
 	if (*line && line[pos - 2] == '\r')
 		line[pos - 2] = 0;

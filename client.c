@@ -30,6 +30,7 @@
 #ifdef HAVE_OPENSSL
 # include	<openssl/ssl.h>
 # include	<openssl/err.h>
+# include	<openssl/bio.h>
 #endif
 
 #include	"client.h"
@@ -57,8 +58,10 @@ static void	 on_client_shutdown_done(uv_shutdown_t *, int);
 static client_t	*client_new(uv_tcp_t *);
 static void	 client_vprintf(client_t *, char const *, va_list ap);
 static void	 client_vlog(int sev, client_t *, char const *, va_list ap);
+static void	 client_puts(client_t *, void *, size_t);
 static void	 client_handle_io(client_t *);
 static void	 client_handle_line(client_t *, char *);
+static void	 client_tls_flush(client_t *);
 
 typedef void (*cmd_handler) (client_t *, char *, char *);
 
@@ -77,6 +80,11 @@ static struct {
 	{ "STARTTLS",		c_starttls,	0 },
 	{ "HELP",		c_help,		0 },
 };
+
+typedef struct client_write_req {
+	client_t	*client;
+	char		*buf;
+} client_write_req_t;
 
 int
 client_init()
@@ -109,67 +117,81 @@ client_run()
 }
 
 void
+#ifdef	HAVE_OPENSSL
 client_accept(stream, ssl, li)
+	SSL_CTX		*ssl;
+#else
+client_accept(stream, li)
+#endif
 	uv_tcp_t	*stream;
-	SSL		*ssl;
 	listener_t	*li;
 {
-client_t	*client;
+client_t	*cl;
 server_t	*server;
 char		 host[NI_MAXHOST], serv[NI_MAXSERV],
 		 strname[NI_MAXHOST + NI_MAXSERV + 1024];
+time_t		 now;
+struct tm	*tm;
+char		 tbuf[64];
 int		 err;
+#ifdef	HAVE_OPENSSL
+int		 is_ssl = ssl && (li->li_ssl_type == SSL_ALWAYS);
+#endif
 
 struct sockaddr_storage	 addr;
 int			 addrlen = sizeof(addr);
-time_t			 now;
-struct tm		*tm;
-char			 tbuf[64];
 
-	client = client_new(stream);
-	client->cl_listener = li;
-	client->cl_ssl = ssl;
-	client->cl_rdbuf = cq_new();
-	stream->data = client;
-
-	if (ssl)
-		client->cl_flags |= CL_SSL;
+	cl = client_new(stream);
+	cl->cl_listener = li;
+	cl->cl_rdbuf = cq_new();
+	stream->data = cl;
 
 	if (err = uv_tcp_nodelay(stream, 0)) {
 		nts_logm(CLIENT_fac, M_CLIENT_ACPTERR,
 			 "uv_tcp_nodelay", uv_strerror(err));
-		client_close(client, 0);
+		client_close(cl, 0);
 		return;
 	}
 
-	if (err = uv_tcp_getpeername(stream, (struct sockaddr *) &addr, &addrlen)) {
+	if (err = uv_tcp_getpeername(cl->cl_stream, (struct sockaddr *) &addr, &addrlen)) {
 		nts_logm(CLIENT_fac, M_CLIENT_ACPTERR,
 			 "uv_tcp_getpeername", uv_strerror(err));
-		client_close(client, 0);
+		client_close(cl, 0);
 		return;
 	}
+
+	bcopy(&addr, &cl->cl_addr, addrlen);
+	cl->cl_addrlen = addrlen;
 
 	if (err = getnameinfo((struct sockaddr *) &addr, addrlen,
 		    host, sizeof(host), serv, sizeof(serv),
 		    NI_NUMERICHOST | NI_NUMERICSERV)) {
 		nts_logm(CLIENT_fac, M_CLIENT_ACPTERR,
 			 "getnameinfo", gai_strerror(err));
-		client_close(client, 0);
+		client_close(cl, 0);
 		return;
 	}
 
-	bcopy(&addr, &client->cl_addr, addrlen);
-	client->cl_addrlen = addrlen;
+#ifdef	HAVE_OPENSSL
+	if (is_ssl) {
+		cl->cl_flags |= (CL_SSL | CL_SSL_ACPTING);
+		cl->cl_ssl = SSL_new(ssl);
+		cl->cl_bio_in = BIO_new(BIO_s_mem());
+		cl->cl_bio_out = BIO_new(BIO_s_mem());
+		SSL_set_bio(cl->cl_ssl, cl->cl_bio_in, cl->cl_bio_out);
+		SSL_set_accept_state(cl->cl_ssl);
+	}
+#endif
 
-	if ((server = server_find_by_address(&addr)) == NULL
+	if ((server = server_find_by_address(&cl->cl_addr)) == NULL
 	    && !allow_unauthed) {
 		if (reader_handler) {
-			client_reader(client);
-			client_destroy(client);
+			client_reader(cl);
+			client_destroy(cl);
 		} else {
 			nts_logm(CLIENT_fac, M_CLIENT_DENIED, host, serv);
-			client_printf(client, "502 Access denied (%s).\r\n", contact_address);
-			client_close(client, 1);
+			client_printf(cl, "502 Access denied (%s).\r\n", contact_address);
+			client_close(cl, 1);
 		}
 
 		return;
@@ -179,32 +201,127 @@ char			 tbuf[64];
 		if (server->se_nconns == server->se_maxconns_in) {
 			nts_logm(CLIENT_fac, M_CLIENT_TOOMANY, server->se_name,
 				 host, serv);
-			client_printf(client, "400 Too many connections (%s).\r\n", contact_address);
-			client_close(client, 1);
+			client_printf(cl, "400 Too many connections (%s).\r\n", contact_address);
+			client_close(cl, 1);
 			return;
 		}
-		SIMPLEQ_INSERT_TAIL(&server->se_clients, client, cl_list);
+		SIMPLEQ_INSERT_TAIL(&server->se_clients, cl, cl_list);
 		++server->se_nconns;
 
-		client->cl_server = server;
+		cl->cl_server = server;
 		snprintf(strname, sizeof(strname), "%s[%s]:%s", server->se_name, host, serv);
-		client->cl_strname = xstrdup(strname);
+		cl->cl_strname = xstrdup(strname);
 	} else { 
 		snprintf(strname, sizeof(strname), "unknown[%s]:%s", host, serv);
-		client->cl_strname = xstrdup(strname);
+		cl->cl_strname = xstrdup(strname);
 	}
+
+#ifdef	HAVE_OPENSSL
+	if (DEBUG(CIO) && is_ssl)
+		client_log(LOG_DEBUG, cl, "client is SSL");
+#endif
 
 	time(&now);
 	tm = localtime(&now);
 	strftime(tbuf, sizeof(tbuf), "%d-%b-%Y %H:%M:%S %Z", tm);
-	client_printf(client, "200 %s %s ready at %s (%s).\r\n",
+	client_printf(cl, "200 %s %s ready at %s (%s).\r\n",
 		      pathhost, version_string, tbuf, contact_address);
 
-	uv_read_start((uv_stream_t *) stream, uv_alloc, on_client_read);
+	uv_read_start((uv_stream_t *) cl->cl_stream, uv_alloc, on_client_read);
 
-	if (log_incoming_connections)
-		client_logm(CLIENT_fac, M_CLIENT_CONNECT, client);
+	if (log_incoming_connections && !(cl->cl_flags & CL_SSL_ACPTING))
+		client_logm(CLIENT_fac, M_CLIENT_CONNECT, cl);
 }
+
+#ifdef	HAVE_OPENSSL
+static void
+client_write_tls_pending(cl)
+	client_t	*cl;
+{
+client_write_req_t	*req;
+uv_write_t		*wr;
+uv_buf_t		 ubuf;
+BUF_MEM			*bptr;
+
+	client_tls_flush(cl);
+
+	if (DEBUG(CIO))
+		client_log(LOG_DEBUG, cl, "client_write_tls_pending cq_len=%d bio_out=%d",
+			   (int) cq_len(cl->cl_wrbuf),
+			   (int) BIO_ctrl_pending(cl->cl_bio_out));
+
+	if (!BIO_ctrl_pending(cl->cl_bio_out))
+		return;
+
+	req = xcalloc(1, sizeof(*req));
+	wr = xcalloc(1, sizeof(*wr));
+
+	BIO_get_mem_ptr(cl->cl_bio_out, &bptr);
+
+	ubuf = uv_buf_init(bptr->data, bptr->length);
+
+	req->client = cl;
+	req->buf = bptr->data;
+
+	bptr->data = NULL;
+	bptr->length = bptr->max = 0;
+
+	wr->data = req;
+	uv_write(wr, (uv_stream_t *) cl->cl_stream, &ubuf, 1, on_client_write_done);
+}
+
+void
+client_tls_accept(cl)
+	client_t	*cl;
+{
+int	ret, err;
+
+	ret = SSL_accept(cl->cl_ssl);
+	if (DEBUG(CIO))
+		client_log(LOG_DEBUG, cl,
+			   "client_tls_accept: ret=%d",
+			   (int) ret);
+
+	if (ret == 1) {
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, "SSL_accept done");
+		if (log_incoming_connections)
+			client_logm(CLIENT_fac, M_CLIENT_CONNSSL, cl,
+				    SSL_get_cipher_version(cl->cl_ssl),
+				    SSL_get_cipher_name(cl->cl_ssl));
+		cl->cl_flags &= ~CL_SSL_ACPTING;
+		client_write_tls_pending(cl);
+		return;
+	}
+
+	err = SSL_get_error(cl->cl_ssl, ret);
+
+	switch (err) {
+	case SSL_ERROR_WANT_READ:
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl,
+				   "client_tls_accept: SSL_ERROR_WANT_READ "
+				   "in pending=%d out pending=%d",
+				   (int) BIO_ctrl_pending(cl->cl_bio_in),
+				   (int) BIO_ctrl_pending(cl->cl_bio_out));
+		client_write_tls_pending(cl);
+		return;
+
+	case SSL_ERROR_WANT_WRITE:
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl,
+				   "client_tls_accept: SSL_ERROR_WANT_WRITE");
+		client_write_tls_pending(cl);
+		return;
+
+	default:
+		client_logm(CLIENT_fac, M_CLIENT_SSLERR, cl,
+			    ERR_error_string(ERR_get_error(), NULL));
+		client_close(cl, 0);
+		return;
+	}
+}
+#endif	/* !HAVE_OPENSSL */
 
 static void
 on_client_read(stream, nread, buf)
@@ -244,7 +361,73 @@ client_t	*cl = stream->data;
 		return;
 	}
 
-	cq_append(cl->cl_rdbuf, buf->base, nread);
+#ifdef	HAVE_OPENSSL
+	if (cl->cl_flags & CL_SSL) {
+#define	SSL_RDBUF 1024
+	char	*rdbuf = xmalloc(SSL_RDBUF);
+	int	 ret, err;
+
+		client_write_tls_pending(cl);
+
+		if (BIO_write(cl->cl_bio_in, buf->base, nread) <= 0) {
+			if (log_incoming_connections)
+				client_logm(CLIENT_fac, M_CLIENT_SSLERR, cl,
+					    "BIO_write failed");
+			client_close(cl, 0);
+			free(buf->base);
+			return;
+		}
+
+		free(buf->base);
+
+		if (cl->cl_flags & CL_SSL_ACPTING) {
+			client_tls_accept(cl);
+			return;
+		}
+
+		ret = SSL_read(cl->cl_ssl, rdbuf, SSL_RDBUF);
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl,
+				   "on_client_read: SSL read=%d",
+				   (int) ret);
+
+		if (ret <= 0) {
+			free(rdbuf);
+
+			err = SSL_get_error(cl->cl_ssl, ret);
+			switch (err) {
+			case SSL_ERROR_WANT_READ:
+				if (DEBUG(CIO))
+					client_log(LOG_DEBUG, cl,
+						   "on_client_read: SSL_ERROR_WANT_READ "
+						   "in pending=%d out pending=%d",
+						   (int) BIO_ctrl_pending(cl->cl_bio_in),
+						   (int) BIO_ctrl_pending(cl->cl_bio_out));
+				client_write_tls_pending(cl);
+				return;
+
+			case SSL_ERROR_WANT_WRITE:
+				if (DEBUG(CIO))
+					client_log(LOG_DEBUG, cl,
+						   "on_client_read: SSL_ERROR_WANT_WRITE");
+				client_write_tls_pending(cl);
+				return;
+
+			default:
+				client_logm(CLIENT_fac, M_CLIENT_SSLERR, cl,
+					    ERR_error_string(ERR_get_error(), NULL));
+				client_close(cl, 0);
+				return;
+			}
+
+			return;
+		} else {
+			cq_append(cl->cl_rdbuf, rdbuf, ret);
+		}
+		client_write_tls_pending(cl);
+	} else
+#endif
+		cq_append(cl->cl_rdbuf, buf->base, nread);
 
 	if (cl->cl_flags & CL_PAUSED) {
 		if (DEBUG(CIO))
@@ -441,11 +624,6 @@ va_list	ap;
 	va_end(ap);
 }
 
-typedef struct client_write_req {
-	client_t	*client;
-	char		*buf;
-} client_write_req_t;
-
 static void
 on_client_write_done(wr, status)
 	uv_write_t	*wr;
@@ -476,9 +654,6 @@ client_vprintf(client, fmt, ap)
 {
 char			*buf;
 int			 len;
-uv_write_t		*wr;
-uv_buf_t		 ubuf;
-client_write_req_t	*cwr;
 
 #define PRINTF_BUFSZ	1024
 
@@ -492,16 +667,99 @@ client_write_req_t	*cwr;
 	if (DEBUG(CIO))
 		client_log(LOG_DEBUG, client, "-> [%s]", buf);
 
+	client_puts(client, buf, len + 1);
+}
+
+static void
+client_tls_flush(cl)
+	client_t	*cl;
+{
+int	ret, err;
+
+	if (DEBUG(CIO))
+		client_log(LOG_DEBUG, cl, "client_tls_flush");
+
+	if (cl->cl_flags & CL_SSL_ACPTING)
+		return;
+
+	if (!cq_len(cl->cl_wrbuf))
+		return;
+
+	while (cq_len(cl->cl_wrbuf)) {
+	charq_ent_t	*cqe = cq_first_ent(cl->cl_wrbuf);
+
+		ret = SSL_write(cl->cl_ssl, cqe->cqe_data, cqe->cqe_len);
+
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, "client_puts: SSL_write wrote %d",
+				   ret);
+
+		if (ret <= 0)
+			break;
+
+		cq_remove_start(cl->cl_wrbuf, cqe->cqe_len);
+
+		if (cq_len(cl->cl_wrbuf) == 0)
+			return;
+	}
+
+	if (ret <= 0) {
+		err = SSL_get_error(cl->cl_ssl, ret);
+		switch (err) {
+		case SSL_ERROR_WANT_READ:
+			if (DEBUG(CIO))
+				client_log(LOG_DEBUG, cl,
+					   "client_puts: SSL_ERROR_WANT_READ");
+			break;
+
+		case SSL_ERROR_WANT_WRITE:
+			if (DEBUG(CIO))
+				client_log(LOG_DEBUG, cl,
+					   "client_puts: SSL_ERROR_WANT_WRITE");
+			break;
+
+		default:
+			client_logm(CLIENT_fac, M_CLIENT_SSLERR, cl,
+				    ERR_error_string(ERR_get_error(), NULL));
+			break;
+		}
+		return;
+	}
+}
+
+static void
+client_puts(cl, buf, sz)
+	client_t	*cl;
+	void		*buf;
+	size_t		 sz;
+{
+uv_write_t		*wr;
+uv_buf_t		 ubuf;
+client_write_req_t	*cwr;
+
+#ifdef	HAVE_OPENSSL
+	if (cl->cl_flags & CL_SSL) {
+	int	 ret, err;
+	char	*nb;
+
+		nb = xmalloc(sz);
+		bcopy(buf, nb, sz);
+		cq_append(cl->cl_wrbuf, nb, sz);
+		client_write_tls_pending(cl);
+		return;
+	}
+#endif
+
 	wr = xcalloc(1, sizeof(*wr));
-	ubuf = uv_buf_init(buf, len);
+	ubuf = uv_buf_init(buf, sz);
 
 	cwr = xcalloc(1, sizeof(*cwr));
-	cwr->client = client;
+	cwr->client = cl;
 	cwr->buf = buf;
 
 	wr->data = cwr;
 
-	uv_write(wr, (uv_stream_t *) client->cl_stream, &ubuf, 1, on_client_write_done);
+	uv_write(wr, (uv_stream_t *) cl->cl_stream, &ubuf, 1, on_client_write_done);
 }
 
 void
@@ -523,6 +781,9 @@ client_t	*cl;
 	cl->cl_stream = stream;
 	cl->cl_state = CS_WAIT_COMMAND;
 	cl->cl_buffer = xcalloc(1, sizeof(*cl->cl_buffer));
+#ifdef	HAVE_OPENSSL
+	cl->cl_wrbuf = cq_new();
+#endif
 	TAILQ_INIT(cl->cl_buffer);
 	TAILQ_INIT(&cl->cl_msglist);
 	return cl;
@@ -611,6 +872,9 @@ msglist_t	*msg;
 	free(client->cl_username);
 	free(client->cl_strname);
 	cq_free(client->cl_rdbuf);
+#ifdef	HAVE_OPENSSL
+	cq_free(client->cl_wrbuf);
+#endif
 	free(client);
 }
 

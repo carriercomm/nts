@@ -29,6 +29,9 @@ c_help(client, cmd, line)
 		"  MODE STREAM\r\n"
 		"  QUIT\r\n"
 		"  TAKETHIS <msg-id>\r\n"
+#ifdef	HAVE_OPENSSL
+		"  STARTTLS\r\n"
+#endif
 		".\r\n"
 		);
 }

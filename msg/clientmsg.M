@@ -92,6 +92,11 @@ CONNECT	I	client connected
 A new client has connected to the server.
 .
 
+CONNSSL	I	client connected (%s %s)
+A new client has connected to the server using the indicated TLS
+cipher.
+.
+
 DISCEOF	I	disconnected (EOF)
 A client closed the TCP connection to the server without sending a QUIT
 command.  This is normal behaviour for some feeders.
@@ -105,5 +110,9 @@ client.
 
 DISCQUIT	I	disconnected (QUIT)
 A client disconnected normally, by sending a QUIT command.
+.
+
+SSLERR	I	SSL error: %s
+An SSL error occurred when trying to read from or write to the client.
 .
 

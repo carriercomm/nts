@@ -22,6 +22,7 @@
 
 #ifdef HAVE_OPENSSL
 # include	<openssl/ssl.h>
+# include	<openssl/bio.h>
 #endif
 
 #include	"queue.h"
@@ -84,6 +85,7 @@ typedef enum client_state {
 #define CL_READABLE	0x10
 #define CL_WRITABLE	0x20
 #define CL_DRAIN	0x40	/* Destroy once wrbuf is empty */
+#define	CL_SSL_ACPTING	0x80	/* SSL_accept() in progress */
 
 typedef enum {
 	SSL_NEVER = 0,
@@ -126,6 +128,9 @@ typedef struct client {
 
 #ifdef HAVE_OPENSSL
 	SSL		*cl_ssl;
+	BIO		*cl_bio_in,
+			*cl_bio_out;
+	charq_t		*cl_wrbuf;
 #endif
 
 	SIMPLEQ_ENTRY(client)	cl_list;
@@ -149,7 +154,11 @@ void	 client_logm(msg_t fac[], int msg, client_t *, ...);
 extern	config_schema_stanza_t listen_stanza;
 int	client_listen(void);
 
-void	 client_accept(uv_tcp_t *, SSL *, listener_t *);
+#ifdef	HAVE_OPENSSL
+void	 client_accept(uv_tcp_t *, SSL_CTX *, listener_t *);
+#else
+void	 client_accept(uv_tcp_t *, listener_t *);
+#endif
 void	 client_close(client_t *, int);
 void	 client_destroy(void *);
 
@@ -167,6 +176,8 @@ void	 client_pause(client_t *);
 void	 client_unpause(client_t *);
 
 void	 client_do_replies(uv_async_t *, int);
+
+void	 client_tls_accept(client_t *);
 
 /*
  * Client command handlers.

@@ -295,5 +295,5 @@ int		 err;
 		return;
 	}
 
-	client_accept(stream, NULL, li);
+	client_accept(stream, li->li_ssl, li);
 }

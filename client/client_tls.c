@@ -10,41 +10,36 @@
 
 #include	"client.h"
 
-static void	 client_tls_done(int fd, SSL *ssl, void *udata);
-
 void
-c_starttls(client, cmd, line)
-	client_t	*client;
+c_starttls(cl, cmd, line)
+	client_t	*cl;
 	char		*cmd, *line;
 {
-#if 0
 #ifndef HAVE_OPENSSL
-	client_printf(client, "580 TLS not available.\r\n");
+	client_printf(cl, "580 TLS not available.\r\n");
 	return;
 #else
-	if (!client->cl_listener->li_ssl) {
-		client_printf(client, "580 TLS not available.\r\n");
+	if (!cl->cl_listener->li_ssl) {
+		client_printf(cl, "580 TLS not available.\r\n");
 		return;
 	}
 
-	if (client->cl_ssl) {
-		client_printf(client, "502 TLS already in use.\r\n");
+	if (cl->cl_ssl) {
+		client_printf(cl, "502 TLS already in use.\r\n");
 		return;
 	}
 
-	client_printf(client, "382 OK, start negotiation.\r\n");
-	net_starttls(client->cl_fd, client->cl_listener->li_ssl, client_tls_done);
-#endif
-#endif
-}
+	cq_free(cl->cl_rdbuf);
+	cl->cl_rdbuf = cq_new();
 
-static void
-client_tls_done(fd, ssl, udata)
-	SSL	*ssl;
-	void	*udata;
-{
-#if 0
-client_t	*client = udata;
-	client->cl_ssl = ssl;
+	client_printf(cl, "382 OK, start negotiation.\r\n");
+
+	cl->cl_flags |= (CL_SSL | CL_SSL_ACPTING);
+	cl->cl_ssl = SSL_new(cl->cl_listener->li_ssl);
+	cl->cl_bio_in = BIO_new(BIO_s_mem());
+	cl->cl_bio_out = BIO_new(BIO_s_mem());
+	SSL_set_bio(cl->cl_ssl, cl->cl_bio_in, cl->cl_bio_out);
+
+	client_tls_accept(cl);
 #endif
 }
