@@ -25,15 +25,18 @@ c_capabilities(client, cmd, line)
 	if (!auth_enabled || client->cl_authenticated)
 		client_printf(client, "IHAVE\r\nSTREAMING\r\n");
 
-	if (reader_handler && !client->cl_authenticated && !client->cl_ssl)
+	if (reader_handler && !client->cl_authenticated &&
+	    !(client->cl_flags & CL_SSL))
 		client_printf(client, "MODE-READER\r\n");
 
 	if (auth_enabled && !client->cl_authenticated &&
 	    (insecure_auth || (client->cl_flags & CL_SSL)))
 		client_printf(client, "AUTHINFO USER\r\n");
 
+#ifdef	HAVE_OPENSSL
 	if (client->cl_listener->li_ssl && !client->cl_ssl)
 		client_printf(client, "STARTTLS\r\n");
+#endif
 
 	client_printf(client, ".\r\n");
 }

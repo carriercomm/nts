@@ -99,12 +99,12 @@ typedef struct listener {
 	int		 li_nuv;
 	char		*li_address;
 	struct listener	*li_next;
-#ifdef HAVE_OPENSSL
-	SSL_CTX		*li_ssl;
 	char		*li_ssl_cert;
 	char		*li_ssl_key;
 	ssl_type_t	 li_ssl_type;
 	char		*li_ssl_cyphers;
+#ifdef HAVE_OPENSSL
+	SSL_CTX		*li_ssl;
 #endif
 } listener_t;
 

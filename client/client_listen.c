@@ -295,5 +295,9 @@ int		 err;
 		return;
 	}
 
+#ifdef	HAVE_OPENSSL
 	client_accept(stream, li->li_ssl, li);
+#else
+	client_accept(stream, li);
+#endif
 }

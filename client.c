@@ -61,7 +61,9 @@ static void	 client_vlog(int sev, client_t *, char const *, va_list ap);
 static void	 client_puts(client_t *, void *, size_t);
 static void	 client_handle_io(client_t *);
 static void	 client_handle_line(client_t *, char *);
+#ifdef	HAVE_OPENSSL
 static void	 client_tls_flush(client_t *);
+#endif
 
 typedef void (*cmd_handler) (client_t *, char *, char *);
 
@@ -683,6 +685,7 @@ int			 len;
 	client_puts(client, buf, len + 1);
 }
 
+#ifdef	HAVE_OPENSSL
 static void
 client_tls_flush(cl)
 	client_t	*cl;
@@ -739,6 +742,7 @@ int	ret, err;
 		return;
 	}
 }
+#endif	/* !HAVE_OPENSSL */
 
 static void
 client_puts(cl, buf, sz)
