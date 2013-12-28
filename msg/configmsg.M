@@ -1,4 +1,4 @@
-!CONFIG
+!CONFIG 3
 
 OPNFAIL	F	cannot open configuration file "%1$s": %2$s
 NTS failed to open its configuration file.  Check that the file exists

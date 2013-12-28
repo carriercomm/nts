@@ -33,6 +33,7 @@ char	 line[1024];
 char	*subsys;
 int	 lineno = 1;
 int	 msgnum = 0;
+int	 facnum;
 
 	if (!av[1]) {
 		fprintf(stderr, "usage: %s <file>\n", av[0]);
@@ -90,13 +91,23 @@ int	 msgnum = 0;
 	line[strlen(line) - 1] = 0;
 
 	if (line[0] != '!' || !line[1]) {
-		fprintf(stderr, "\"%s\", line %d: expected !<subsystem>\n",
+		fprintf(stderr, "\"%s\", line %d: expected !<subsystem> <facility number>\n",
 			av[1], lineno);
 		goto err;
 	}
 
+	if ((p = index(line, ' ')) == NULL) {
+		fprintf(stderr, "\"%s\", line %d: expected !<subsystem> <facility number>\n",
+			av[1], lineno);
+		goto err;
+	}
+	*p++ = 0;
+
 	subsys = strdup(line + 1);
+	facnum = atoi(p);
+
 	fprintf(srcf, "msg_t %s_fac[] = {\n", subsys);
+	fprintf(hdrf, "#define %s_facn (%d << 16)\n", subsys, facnum);
 	fprintf(hdrf, "extern msg_t %s_fac[];\n", subsys);
 
 	while (fgets(line, sizeof(line), inf)) {

@@ -31,7 +31,7 @@ YACC		= @YACC@
 LEX		= @LEX@
 
 MSGS		= ntsmsg.M dbmsg.M spoolmsg.M clientmsg.M historymsg.M		\
-		  configmsg.M logmsg.M authmsg.M
+		  configmsg.M logmsg.M authmsg.M filtermsg.M
 
 SRCS		= nts.c		config.c	ctl.c		client.c	\
 		  server.c	spool.c		log.c		article.c	\
@@ -68,8 +68,8 @@ dist: ${SRCS} ${HDRS} ${EXTRA_DIST}
 	gzip -f nts-$$version.tar;						\
 	ls -l nts-$$version.tar.gz
 
-nts: $(OBJS) y.tab.o lex.yy.o
-	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) y.tab.o lex.yy.o -o nts $(LIBS)
+nts: $(OBJS) y.tab.o lex.yy.o vers.o
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) y.tab.o lex.yy.o vers.o -o nts $(LIBS)
 
 install:
 	${INSTALL} -d ${sbindir}
@@ -106,6 +106,9 @@ msgcomp: msgcomp.o
 
 %.c %.h:	%.M msgcomp
 	./msgcomp $<
+
+vers.c:	vers.sh
+	sh ${top_srcdir}/vers.sh
 
 db.c: dbmsg.h
 spool.c: spoolmsg.h

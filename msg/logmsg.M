@@ -1,4 +1,4 @@
-!LOG
+!LOG 6
 
 OPNFAIL	F	cannot open log file "%s": %s
 NTS failed to open the configured log file.  Ensure that the correct 

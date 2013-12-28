@@ -1,4 +1,4 @@
-!CLIENT
+!CLIENT 2
 
 ACPTERR	E	accepting client: %1$s: %2$s
 An error occurred while attempting to accept a new client connection.

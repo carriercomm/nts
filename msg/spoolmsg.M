@@ -1,4 +1,4 @@
-!SPOOL
+!SPOOL 8
 
 BADMETHOD	F	"%s", line %d: invalid spool method "%s"
 An invalid spool access was specific in the configuration file. The

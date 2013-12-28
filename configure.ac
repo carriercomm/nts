@@ -8,7 +8,7 @@ dnl freely. This software is provided 'as-is', without any express or implied
 dnl warranty.
 
 AC_PREREQ([2.68])
-AC_INIT([RT/NTS], [1.0-CURRENT], [river@RT.UK.EU.ORG])
+AC_INIT([RT/NTS], [D.1.1], [river@loreley.flyingparchment.org.uk])
 AC_CONFIG_SRCDIR([nts.c])
 AC_CONFIG_HEADERS([setup.h])
 

@@ -1,4 +1,4 @@
-!NTS
+!NTS 7
 
 STARTUP	I	NTS %1$s starting up
 The NTS system has been started, but is not yet running.

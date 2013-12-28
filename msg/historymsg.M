@@ -1,4 +1,4 @@
-!HISTORY
+!HISTORY 5
 
 HDLERR	F	cannot create database handle: %1$s
 NTS failed to create a new Berkeley DB database handle. Check for

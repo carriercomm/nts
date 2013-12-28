@@ -78,6 +78,10 @@ extern uv_loop_t	*loop;
 extern char		*pid_file;
 extern char		*control_path;
 
+extern const char	*buildhost,
+       			*builddate,
+			*builder;
+
 #ifndef HAVE_STRLCPY
 size_t strlcpy(char *, const char *, size_t);
 #endif

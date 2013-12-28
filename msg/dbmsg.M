@@ -1,4 +1,4 @@
-!DB
+!DB 4
 
 NOLOC	F	database path not configure
 The database path was not specified in the configuration file.  Edit

@@ -74,6 +74,7 @@ static char	*chroot_dir;
 uint64_t	 stats_interval = 30;
 uint64_t	 worker_threads = 0;
 uv_loop_t	*loop;
+char		 version_string[64];
 
 #ifndef	NDEBUG
 int		 nts_debug_flags;
@@ -160,10 +161,19 @@ char		*s;
 	/* Initialise the rng before we chroot */
 	arc4random();
 
+	snprintf(version_string, sizeof(version_string), "RT/NTS %s ", PACKAGE_VERSION);
+	switch (*PACKAGE_VERSION) {
+	case 'V': strlcat(version_string, "(RELEASE)", sizeof(version_string)); break;
+	case 'T': strlcat(version_string, "(TEST RELEASE)", sizeof(version_string)); break;
+	case 'D': strlcat(version_string, "(DEVELOPMENT)", sizeof(version_string)); break;
+	}
+
 	while ((c = getopt(argc, argv, "M:Vc:p:nx:yD:")) != -1) {
 		switch (c) {
 			case 'V':
-				printf("RT/NTS %s\n", PACKAGE_VERSION);
+				printf("%s\n", version_string);
+				printf("built by %s@%s at %s\n\n",
+				       builder, buildhost, builddate);
 				printf("\t%s\n", db_version(NULL, NULL, NULL));
 				printf("\tlibuv %s\n", uv_version_string());
 #ifdef HAVE_OPENSSL

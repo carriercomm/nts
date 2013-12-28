@@ -1,4 +1,4 @@
-!AUTH
+!AUTH 1
 
 OPNFAIL	E	"%s": failed to open file: %s
 NTS failed to open the configured authentication database.  Ensure the
