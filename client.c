@@ -285,10 +285,16 @@ int	ret, err;
 	if (ret == 1) {
 		if (DEBUG(CIO))
 			client_log(LOG_DEBUG, cl, "SSL_accept done");
-		if (log_incoming_connections)
-			client_logm(CLIENT_fac, M_CLIENT_CONNSSL, cl,
-				    SSL_get_cipher_version(cl->cl_ssl),
-				    SSL_get_cipher_name(cl->cl_ssl));
+		if (log_incoming_connections) {
+			if (cl->cl_listener->li_ssl_type == SSL_ALWAYS)
+				client_logm(CLIENT_fac, M_CLIENT_CONNTLS, cl,
+					    SSL_get_cipher_version(cl->cl_ssl),
+					    SSL_get_cipher_name(cl->cl_ssl));
+			else
+				client_logm(CLIENT_fac, M_CLIENT_STARTTLS, cl,
+					    SSL_get_cipher_version(cl->cl_ssl),
+					    SSL_get_cipher_name(cl->cl_ssl));
+		}
 		cl->cl_flags &= ~CL_SSL_ACPTING;
 		client_write_tls_pending(cl);
 		return;
@@ -315,7 +321,7 @@ int	ret, err;
 		return;
 
 	default:
-		client_logm(CLIENT_fac, M_CLIENT_SSLERR, cl,
+		client_logm(CLIENT_fac, M_CLIENT_TLSERR, cl,
 			    ERR_error_string(ERR_get_error(), NULL));
 		client_close(cl, 0);
 		return;
@@ -371,7 +377,7 @@ client_t	*cl = stream->data;
 
 		if (BIO_write(cl->cl_bio_in, buf->base, nread) <= 0) {
 			if (log_incoming_connections)
-				client_logm(CLIENT_fac, M_CLIENT_SSLERR, cl,
+				client_logm(CLIENT_fac, M_CLIENT_TLSERR, cl,
 					    "BIO_write failed");
 			client_close(cl, 0);
 			free(buf->base);
@@ -414,7 +420,7 @@ client_t	*cl = stream->data;
 				return;
 
 			default:
-				client_logm(CLIENT_fac, M_CLIENT_SSLERR, cl,
+				client_logm(CLIENT_fac, M_CLIENT_TLSERR, cl,
 					    ERR_error_string(ERR_get_error(), NULL));
 				client_close(cl, 0);
 				return;
@@ -726,7 +732,7 @@ int	ret, err;
 			break;
 
 		default:
-			client_logm(CLIENT_fac, M_CLIENT_SSLERR, cl,
+			client_logm(CLIENT_fac, M_CLIENT_TLSERR, cl,
 				    ERR_error_string(ERR_get_error(), NULL));
 			break;
 		}

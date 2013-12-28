@@ -25,40 +25,40 @@ max-connections value for this server, or configure the remote system
 to attempt fewer connections.
 .
 
-SSLCTXFAIL	F	listener "%1$s": cannot create SSL context: %2$s
-NTS was unable to create its internal context for this SSL listener.
+TLSCTXFAIL	F	listener "%1$s": cannot create TLS context: %2$s
+NTS was unable to create its internal context for this TLS listener.
 This may indicate a lack of system resources.
 .
 
-SSLCERTFAIL	F	listener "%1$s": cannot load SSL certificate: %2$s
-NTS was unable to load the configured SSL certificate for this SSL
+TLSCERTFAIL	F	listener "%1$s": cannot load TLS certificate: %2$s
+NTS was unable to load the configured TLS certificate for this TLS
 listener.  Check that the correct path has been specified and that NTS
 has permission to load the certificate file.
 .
 
-SSLKEYFAIL	F	listener "%1$s": cannot load SSL certificate: %2$s
-NTS was unable to load the configured SSL key for this SSL listener.  Check 
+TLSKEYFAIL	F	listener "%1$s": cannot load TLS certificate: %2$s
+NTS was unable to load the configured TLS key for this TLS listener.  Check 
 that the correct path has been specified and that NTS has permission to load 
 the certificate file.
 .
 
-SSLCYFAIL	F	listener %1$s: no valid cyphers
-No valid SSL cyphers were found in the cypher list configured for the
+TLSCYFAIL	F	listener %1$s: no valid cyphers
+No valid TLS cyphers were found in the cypher list configured for the
 specified listener.  Ensure that the installed version of OpenSSL
 supports the requested cyphers.
 .
 
-NOSSL	F	listener %s: SSL support not available
-A listener was configured to use SSL, but this version of NTS was not
-built with SSL support.  Rebuild NTS from source, or if you obtained a
-binary distribution, ask the builder to build with SSL support.
+NOTLS	F	listener %s: TLS support not available
+A listener was configured to use TLS, but this version of NTS was not
+built with TLS support.  Rebuild NTS from source, or if you obtained a
+binary distribution, ask the builder to build with TLS support.
 .
 
-SSLBADOPT	F	"%1$s", line %2$d: unknown SSL option "%3$s",
-An invalid SSL mode was specified for this listener connection.  The
-SSL mode should be 'always', to enable SSL on this connection by
+TLSBADOPT	F	"%1$s", line %2$d: unknown TLS option "%3$s",
+An invalid TLS mode was specified for this listener connection.  The
+TLS mode should be 'always', to enable TLS on this connection by
 default, or 'starttls' to enable the STARTTLS command for clients that
-wish to enable SSL.
+wish to enable TLS.
 .
 
 INVADDR	F	listen: "%1$s": invalid address
@@ -92,9 +92,13 @@ CONNECT	I	client connected
 A new client has connected to the server.
 .
 
-CONNSSL	I	client connected (%s %s)
+CONNTLS	I	client connected (%s %s)
 A new client has connected to the server using the indicated TLS
 cipher.
+.
+
+STARTTLS	I	TLS started: %s %s
+A client negotiated TLS on an existing unencrypted connection.
 .
 
 DISCEOF	I	disconnected (EOF)
@@ -112,7 +116,7 @@ DISCQUIT	I	disconnected (QUIT)
 A client disconnected normally, by sending a QUIT command.
 .
 
-SSLERR	I	SSL error: %s
-An SSL error occurred when trying to read from or write to the client.
+TLSERR	I	TLS error: %s
+An TLS error occurred when trying to read from or write to the client.
 .
 

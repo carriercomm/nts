@@ -74,7 +74,7 @@ listener_t	*li = udata;
 	int	ret;
 
 		if ((li->li_ssl = SSL_CTX_new(SSLv23_server_method())) == NULL) {
-			nts_logm(CLIENT_fac, M_CLIENT_SSLCTXFAIL,
+			nts_logm(CLIENT_fac, M_CLIENT_TLSCTXFAIL,
 				 stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
 			++listen_cfgerrs;
 			return;
@@ -82,7 +82,7 @@ listener_t	*li = udata;
 
 		if ((ret = SSL_CTX_use_certificate_file(li->li_ssl,
 				li->li_ssl_cert, SSL_FILETYPE_PEM)) != 1) {
-			nts_logm(CLIENT_fac, M_CLIENT_SSLCERTFAIL,
+			nts_logm(CLIENT_fac, M_CLIENT_TLSCERTFAIL,
 				 stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
 			++listen_cfgerrs;
 			return;
@@ -90,7 +90,7 @@ listener_t	*li = udata;
 
 		if ((ret = SSL_CTX_use_PrivateKey_file(li->li_ssl,
 				li->li_ssl_key, SSL_FILETYPE_PEM)) != 1) {
-			nts_logm(CLIENT_fac, M_CLIENT_SSLKEYFAIL,
+			nts_logm(CLIENT_fac, M_CLIENT_TLSKEYFAIL,
 				 stz->cs_title, ERR_error_string(ERR_get_error(), NULL));
 			++listen_cfgerrs;
 			return;
@@ -98,7 +98,7 @@ listener_t	*li = udata;
 
 		if (li->li_ssl_cyphers) {
 			if (SSL_CTX_set_cipher_list(li->li_ssl, li->li_ssl_cyphers) == 0) {
-				nts_logm(CLIENT_fac, M_CLIENT_SSLCYFAIL, stz->cs_title);
+				nts_logm(CLIENT_fac, M_CLIENT_TLSCYFAIL, stz->cs_title);
 				++listen_cfgerrs;
 				return;
 			}
@@ -106,7 +106,7 @@ listener_t	*li = udata;
 
 		SSL_CTX_set_options(li->li_ssl, SSL_OP_NO_SSLv2);
 #else
-		nts_logm(CLIENT_fac, M_CLIENT_NOSSL, stz->cs_title);
+		nts_logm(CLIENT_fac, M_CLIENT_NOTLS, stz->cs_title);
 		++listen_cfgerrs;
 		return;
 #endif
@@ -129,7 +129,7 @@ listener_t	*li = udata;
 	} else if (strcmp(v, "starttls") == 0) {
 		li->li_ssl_type = SSL_STARTTLS;
 	} else {
-		nts_logm(CLIENT_fac, M_CLIENT_SSLBADOPT,
+		nts_logm(CLIENT_fac, M_CLIENT_TLSBADOPT,
 			 opt->co_file, opt->co_lineno, v);
 		++listen_cfgerrs;
 	}
