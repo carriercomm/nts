@@ -191,7 +191,7 @@ case $host_os in
 		UV_EXTRA_SRCS="freebsd.c kqueue.c"
 		;;
 	linux*)
-		UV_EXTRA_SRCS="linux-core.c linux-inotify.c linux-syscalls.c linux-syscalls.h proctitle.c"
+		UV_EXTRA_SRCS="linux-core.c linux-inotify.c linux-syscalls.c proctitle.c"
 		;;
 	netbsd*)
 		UV_EXTRA_SRCS="netbsd.c kqueue.c"
