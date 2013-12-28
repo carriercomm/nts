@@ -25,7 +25,7 @@ typedef struct incoming_work {
 static int	 handle_one_article(artbuf_t *);
 
 static void	 on_new_work(uv_work_t *);
-static void	 on_work_done(uv_work_t *, status);
+static void	 on_work_done(uv_work_t *, int);
 
 int
 incoming_init()
