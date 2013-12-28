@@ -54,6 +54,7 @@ AC_PROG_RANLIB
 # Libraries NTS uses
 AC_CHECK_LIB([socket], [socket])
 AC_CHECK_LIB([rt], [clock_gettime])
+AC_CHECK_LIB([m], [sqrt])
 
 # Libraries libuv uses
 AC_CHECK_LIB([dl], [dlopen], [UV_LIBS="$UV_LIBS -ldl"])
