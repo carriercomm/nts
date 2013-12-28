@@ -874,6 +874,7 @@ msglist_t	*msg;
 	cq_free(client->cl_rdbuf);
 #ifdef	HAVE_OPENSSL
 	cq_free(client->cl_wrbuf);
+	SSL_free(client->cl_ssl);
 #endif
 	free(client);
 }
