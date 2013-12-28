@@ -64,9 +64,6 @@ typedef struct article {
 	bs_word_t	*art_filters;
 } article_t;
 
-void		article_init(void);
-void		article_run(void);
-
 /*
  * Parse an article in wire form and return a parsed version.
  */

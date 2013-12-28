@@ -21,18 +21,8 @@
 
 static int	article_classify(article_t *);
 static time_t	parse_date(char const *);
-static size_t	article_size;
 
-void
-article_init()
-{
-}
-
-void
-article_run()
-{
-	article_size = sizeof(article_t) + bs_size(nfilters);
-}
+#define	ARTICLE_SIZE (sizeof(article_t) + bs_size(nfilters))
 
 article_t *
 article_parse(text_)
@@ -43,7 +33,7 @@ char		*line = NULL, *groups = NULL, *groups_ = NULL, *body = NULL;
 char		*text, *otext, *p;
 size_t		 m;
 	
-	article = xcalloc(1, article_size);
+	article = xcalloc(1, ARTICLE_SIZE);
 	article->art_filters = (bs_word_t *) ((char *) article + sizeof(article_t));
 
 	SIMPLEQ_INIT(&article->art_groups);

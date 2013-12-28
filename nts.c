@@ -160,8 +160,6 @@ char		*s;
 	/* Initialise the rng before we chroot */
 	arc4random();
 
-	article_init();
-
 	while ((c = getopt(argc, argv, "M:Vc:p:nx:yD:")) != -1) {
 		switch (c) {
 			case 'V':
@@ -317,8 +315,6 @@ char		*s;
 			panic("cannot setuid to %s (%d): %s",
 				runas_user, pwd->pw_uid, strerror(errno));
 	}
-
-	article_run();
 
 	if (db_run() == -1 ||
 	    history_run() == -1 ||
