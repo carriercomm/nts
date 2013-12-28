@@ -43,6 +43,7 @@ static void	 peer_set_bind_address_v6(conf_stanza_t *, conf_option_t *, void *, 
 static void	 peer_set_adaptive(conf_stanza_t *, conf_option_t *, void *, void *);
 static void	 peer_set_incoming_username(conf_stanza_t *, conf_option_t *, void *, void *);
 static void	 peer_set_outgoing_username(conf_stanza_t *, conf_option_t *, void *, void *);
+static void	 peer_set_article_buffer(conf_stanza_t *, conf_option_t *, void *, void *);
 
 static void	 server_add_exclude(server_t *, char const *);
 static void	 on_server_dns_done(uv_getaddrinfo_t *, int, struct addrinfo *);
@@ -72,6 +73,7 @@ static config_schema_opt_t peer_opts[] = {
 	{ "adaptive",			OPT_TYPE_NUMBER | OPT_LIST,		peer_set_adaptive },
 	{ "incoming-username",		OPT_TYPE_STRING,			peer_set_incoming_username },
 	{ "outgoing-username",		OPT_TYPE_STRING,			peer_set_outgoing_username },
+	{ "article-buffer",		OPT_TYPE_NUMBER,			peer_set_article_buffer },
 	{ }
 };
 
@@ -279,6 +281,8 @@ server_t	*server;
 		default_server = server;
 
 	server->se_adp_hi = -1;
+	server->se_buffer = -1;
+
 	SIMPLEQ_INIT(&server->se_clients);
 	SIMPLEQ_INIT(&server->se_filters_in);
 	SIMPLEQ_INIT(&server->se_filters_out);
@@ -339,7 +343,7 @@ server_t	*server = udata;
 		bcopy(&default_server->se_bind_v6, &server->se_bind_v6,
 			sizeof(server->se_bind_v6));
 
-	if (server->se_adp_hi == -1 && default_server && default_server->se_adp_hi) {
+	if (server->se_adp_hi == -1 && default_server && default_server->se_adp_hi > 0) {
 		server->se_adp_hi = default_server->se_adp_hi;
 		server->se_adp_lo = default_server->se_adp_lo;
 	}
@@ -355,6 +359,11 @@ server_t	*server = udata;
 		if (SLIST_EMPTY(&server->se_exclude))
 			server_add_exclude(server, server->se_host);
 	}
+
+	if (server->se_buffer == -1 && default_server && default_server->se_buffer > 0)
+		server->se_buffer = default_server->se_buffer;
+	else
+		server->se_buffer = 0;
 
 	if (SLIST_EMPTY(&server->se_exclude)) {
 	hostlist_entry_t	*hl = xcalloc(1, sizeof(*hl));
@@ -749,6 +758,18 @@ server_t	*se = udata;
 	se->se_adp_hi = opt->co_value->cv_number;
 	if (opt->co_value->cv_next)
 		se->se_adp_lo = opt->co_value->cv_next->cv_number;
+}
+
+static void
+peer_set_article_buffer(stz, opt, udata, arg)
+	conf_stanza_t	*stz;
+	conf_option_t	*opt;
+	void		*udata, *arg;
+{
+server_t	*se = udata;
+	se->se_buffer = opt->co_value->cv_number;
+	if (se->se_buffer == 0)
+		se->se_buffer = 1;
 }
 
 static void

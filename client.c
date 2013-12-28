@@ -57,6 +57,7 @@ static void	 on_client_shutdown_done(uv_shutdown_t *, int);
 static client_t	*client_new(uv_tcp_t *);
 static void	 client_vprintf(client_t *, char const *, va_list ap);
 static void	 client_vlog(int sev, client_t *, char const *, va_list ap);
+static void	 client_handle_io(client_t *);
 static void	 client_handle_line(client_t *, char *);
 
 typedef void (*cmd_handler) (client_t *, char *, char *);
@@ -246,27 +247,68 @@ client_t	*cl = stream->data;
 		return;
 	}
 
-	if (cl->cl_flags & CL_PENDING) {
-		if (DEBUG(CIO))
-			client_log(LOG_DEBUG, cl, "on_client_read: client is pending");
+	client_handle_io(cl);
+}
 
-		return;
-	}
-
+static void
+client_handle_io(cl)
+	client_t	*cl;
+{
 	for (;;) {
 	char	*ln;
+
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, "on_client_read: reading article: %d"
+					          ", buffer: %p, nbuffered: %d, state: %d",
+				   cl->cl_state == CS_TAKETHIS || cl->cl_state == CS_IHAVE,
+				   TAILQ_FIRST(&cl->cl_buffer),
+				   cl->cl_nbuffered,
+				   cl->cl_state);
+
+		if (cl->cl_nbuffered >= cl->cl_server->se_buffer) {
+			if (DEBUG(CIO))
+				client_log(LOG_DEBUG, cl, "on_client_read: article buffer full");
+			client_pause(cl);
+			return;
+		}
+
+		/*
+		 * We check last_was_dot here because otherwise we return from 
+		 * client_handle_line(cl, ".") after a TAKETHIS, and since the
+		 * client state is no longer CS_TAKETHIS, we interpret the "."
+		 * as a command, and attempt to buffer an article, thereby
+		 * sending an unwanted 239 reply.  last_was_dot tracks if the
+		 * last line read was "."; if it is, we skip the buffering.
+		 *
+		 * This is a hack and should be replaced with something better!
+		 */
+		if (cl->cl_nbuffered > 1 &&
+		    !(cl->cl_state== CS_TAKETHIS || cl->cl_state == CS_IHAVE) &&
+		    !cl->cl_last_was_dot) {
+		artbuf_t	*abuf = TAILQ_FIRST(&cl->cl_buffer);
+
+			if (DEBUG(CIO))
+				client_log(LOG_DEBUG, cl, "on_client_read: buffering 1");
+
+			client_printf(cl, "%d %s\r\n",
+				      (abuf->ab_type == AB_TAKETHIS) ? 239 : 235,
+				      abuf->ab_msgid);
+		}
+
+		cl->cl_last_was_dot = 0;
 
 		if ((ln = cq_read_line(cl->cl_rdbuf)) == NULL)
 			break;
 
 		if (DEBUG(CIO))
-			client_log(LOG_DEBUG, cl, "incoming: [%s]", ln);
+			client_log(LOG_DEBUG, cl, "<- [%s]", ln);
 
 		client_handle_line(cl, ln);
+
 		free(ln);
 		ln = NULL;
 
-		if (cl->cl_flags & (CL_DEAD | CL_PAUSED | CL_PENDING))
+		if (cl->cl_flags & (CL_DEAD | CL_PAUSED))
 			break;
 	}
 }
@@ -304,6 +346,7 @@ client_handle_line(cl, line)
 	artbuf_t	*buf = TAILQ_LAST(&cl->cl_buffer, artbuf_list);
 
 		if (strcmp(line, ".") == 0) {
+			cl->cl_last_was_dot = 1;
 			client_takethis_done(cl);
 		} else {
 			if (buf->ab_len <= max_article_size) {
@@ -394,6 +437,9 @@ client_write_req_t	*cwr;
 		vsnprintf(buf, len + 1, fmt, ap);
 	}
 
+	if (DEBUG(CIO))
+		client_log(LOG_DEBUG, client, "-> [%s]", buf);
+
 	wr = xcalloc(1, sizeof(*wr));
 	ubuf = uv_buf_init(buf, len);
 
@@ -461,7 +507,7 @@ on_client_close_done(handle)
 {
 client_t	*cl = handle->data;
 
-	if (cl->cl_flags & CL_PENDING)
+	if (cl->cl_nbuffered)
 		return;
 
 	client_destroy(cl);
@@ -534,5 +580,8 @@ client_unpause(cl)
 		return;
 
 	cl->cl_flags &= ~CL_PAUSED;
+
+	if (cq_len(cl->cl_rdbuf))
+		client_handle_io(cl);
 	uv_read_start((uv_stream_t *) cl->cl_stream, uv_alloc, on_client_read);
 }

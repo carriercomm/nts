@@ -151,7 +151,7 @@ charq_ent_t	*cqe;
 		if (r = memchr(cqe->cqe_data + offs, c, cqe->cqe_len - offs))
 			return i + (r - (cqe->cqe_data + offs));
 
-		i += cqe->cqe_len;
+		i += (cqe->cqe_len - offs);
 		offs = 0;
 	}
 

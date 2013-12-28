@@ -58,6 +58,7 @@ artbuf_t	*buf;
 		buf->ab_text = xmalloc(buf->ab_alloc);
 		buf->ab_text[0] = 0;
 		buf->ab_client = client;
+		buf->ab_type = AB_IHAVE;
 
 		TAILQ_INSERT_TAIL(&client->cl_buffer, buf, ab_list);
 		client->cl_state = CS_IHAVE;

@@ -142,7 +142,7 @@ on_work_done(req, status)
 {
 incoming_work_t	*iw = req->data;
 
-	client_incoming_reply(iw->iw_artbuf->ab_client, iw->iw_status);
+	client_incoming_reply(iw->iw_artbuf->ab_client, iw->iw_artbuf, iw->iw_status);
 	free(iw);
 	free(req);
 }

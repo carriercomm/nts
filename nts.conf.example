@@ -561,6 +561,34 @@ peer {
 	 * correctly.
 	 */
 	#inn-bug-workaround:    no;
+
+	/*
+	 * Buffer articles received from a peer in memory while processing
+	 * them, and immediately return a 239 (accepted) response to the
+	 * client.  This will increase throughput, but if NTS or the host
+	 * crashes, any buffered articles will be lost.
+	 *
+	 * Since NTS will indicate it has accepted the article before it's
+	 * been filtered or the history database has been checked, there's
+	 * no way to indicate to the peer that an article was rejected.
+	 *
+	 * Therefore, buffering does not work correctly with peers that
+	 * implement adaptive feeding (such as innfeed): the peer will see
+	 * that every article is being accepted, and stop sending CHECK
+	 * commands, wasting both bandwidth and CPU.  Therefore, do not
+	 * enable buffering for peers with adaptive feeding enabled.
+	 *
+	 * NTS will attempt to avoid buffering where possible: it will not
+	 * return a 239 response to the peer until the peer sends another
+	 * command that NTS needs to reply to.  Therefore, on low-throughput
+	 * servers (such as text-only servers), articles may never be
+	 * buffered. 
+	 *
+	 * Specify the maximum number of articles to be buffered in memory.
+	 * Values over 10 are unlikely to result in any performance gain.
+	 * Set to 0 to disable for a particular peer.
+	 */
+	article-buffer:	10;
 };
 
 /*

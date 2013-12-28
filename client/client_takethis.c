@@ -42,6 +42,7 @@ artbuf_t	*buf;
 	buf->ab_text = xmalloc(buf->ab_alloc);
 	buf->ab_text[0] = 0;
 	buf->ab_client = client;
+	buf->ab_type = AB_TAKETHIS;
 
 	TAILQ_INSERT_TAIL(&client->cl_buffer, buf, ab_list);
 	client->cl_state = CS_TAKETHIS;
@@ -82,8 +83,9 @@ artbuf_t	*buf = TAILQ_LAST(&client->cl_buffer, artbuf_list);
 		client_log(LOG_DEBUG, client, "takethis_done; process_article");
 
 	process_article(buf);
-	client->cl_flags |= CL_PENDING;
-	client_pause(client);
+	++client->cl_nbuffered;
+	client->cl_state = CS_WAIT_COMMAND;
+	return;
 
 err:
 	TAILQ_REMOVE(&client->cl_buffer, buf, ab_list);
@@ -95,37 +97,36 @@ err:
 }
 
 void
-client_incoming_reply(cl, reason)
+client_incoming_reply(cl, buf, reason)
 	client_t	*cl;
+	artbuf_t	*buf;
 {
-int		 rejected = (cl->cl_state == CS_TAKETHIS) ? 439 : 437;
-int		 accepted = (cl->cl_state == CS_TAKETHIS) ? 239 : 235;
-artbuf_t	*buf;
-
-	buf = TAILQ_FIRST(&cl->cl_buffer);
 
 	if (DEBUG(CIO))
 		client_log(LOG_DEBUG, cl, "got process reply");
 
 	if (cl->cl_flags & (CL_DEAD | CL_DRAIN)) {
-		client_destroy(cl);
+		if (--cl->cl_nbuffered == 0)
+			client_destroy(cl);
 		return;
 	}
 
-	cl->cl_flags &= ~CL_PENDING;
-	client_unpause(cl);
+	if (cl->cl_nbuffered == 1) {
+		if (reason == IN_OK)
+			client_printf(cl, "%d %s\r\n",
+				      (buf->ab_type == AB_TAKETHIS) ? 239 : 235,
+				      buf->ab_msgid);
+		else
+			client_printf(cl, "%d %s\r\n",
+				      (buf->ab_type == AB_TAKETHIS) ? 339 : 437,
+				      buf->ab_msgid);
+	}
 
-	if (reason == IN_OK)
-		client_printf(cl, "%d %s\r\n",
-			      accepted, buf->ab_msgid);
-	else
-		client_printf(cl, "%d %s\r\n",
-			      rejected, buf->ab_msgid);
-
-	cl->cl_state = CS_WAIT_COMMAND;
+	--cl->cl_nbuffered;
 
 	TAILQ_REMOVE(&cl->cl_buffer, buf, ab_list);
 	free(buf->ab_msgid);
 	free(buf->ab_text);
 	free(buf);
+	client_unpause(cl);
 }

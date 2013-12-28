@@ -38,13 +38,20 @@ struct article;
  */
 #define	ARTBUF_START_SIZE	8192
 
+typedef enum ab_type {
+	AB_IHAVE,
+	AB_TAKETHIS
+} ab_type_t;
+
 struct client;
 typedef struct artbuf {
 	char		*ab_text;
 	size_t		 ab_alloc;
 	size_t		 ab_len;
 	char		*ab_msgid;
+	int		 ab_flags;
 	struct client	*ab_client;
+	ab_type_t	 ab_type;
 	TAILQ_ENTRY(artbuf)
 			 ab_list;
 } artbuf_t;
@@ -66,7 +73,6 @@ typedef enum client_state {
 #define CL_READABLE	0x10
 #define CL_WRITABLE	0x20
 #define CL_DRAIN	0x40	/* Destroy once wrbuf is empty */
-#define	CL_PENDING	0x80	/* Waiting for incoming reply */
 
 typedef enum {
 	SSL_NEVER = 0,
@@ -101,8 +107,10 @@ typedef struct client {
 	int		 cl_flags;
 	listener_t	*cl_listener;
 	artbuf_list_t	 cl_buffer;
+	int		 cl_nbuffered;
 
 	charq_t		*cl_rdbuf;
+	int		 cl_last_was_dot; /* XXX awful: see client_handle_io() */
 
 #ifdef HAVE_OPENSSL
 	SSL		*cl_ssl;
@@ -116,7 +124,7 @@ typedef SIMPLEQ_HEAD(client_list, client) client_list_t;
 int	client_init(void);
 int	client_run(void);
 
-void	client_incoming_reply(client_t *, int);
+void	client_incoming_reply(client_t *, artbuf_t *, int);
 
 /*
  * Internal functions.

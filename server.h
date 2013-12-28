@@ -126,6 +126,8 @@ typedef struct server {
 	char			*se_username_in,
 				*se_username_out;
 
+	int			 se_buffer;
+
 	client_list_t		 se_clients;
 
 	SLIST_ENTRY(server)	 se_list;
