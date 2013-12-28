@@ -120,8 +120,11 @@ char		 host[NI_MAXHOST], serv[NI_MAXSERV],
 		 strname[NI_MAXHOST + NI_MAXSERV + 1024];
 int		 err;
 
-struct sockaddr_storage	addr;
-int			addrlen = sizeof(addr);
+struct sockaddr_storage	 addr;
+int			 addrlen = sizeof(addr);
+time_t			 now;
+struct tm		*tm;
+char			 tbuf[64];
 
 	client = client_new(stream);
 	client->cl_listener = li;
@@ -191,8 +194,11 @@ int			addrlen = sizeof(addr);
 		client->cl_strname = xstrdup(strname);
 	}
 
-	client_printf(client, "200 RT/NTS %s ready (%s).\r\n",
-			PACKAGE_VERSION,  contact_address);
+	time(&now);
+	tm = localtime(&now);
+	strftime(tbuf, sizeof(tbuf), "%d-%b-%Y %H:%M:%S %Z", tm);
+	client_printf(client, "200 %s %s ready at %s (%s).\r\n",
+		      pathhost, version_string, tbuf, contact_address);
 
 	uv_read_start((uv_stream_t *) stream, uv_alloc, on_client_read);
 

@@ -19,8 +19,8 @@ c_capabilities(client, cmd, line)
 	client_printf(client,
 		"101 Capability list:\r\n"
 		"VERSION 2\r\n"
-		"IMPLEMENTATION RT/NTS %s\r\n",
-		PACKAGE_VERSION);
+		"IMPLEMENTATION %s\r\n",
+		version_string);
 
 	if (!auth_enabled || client->cl_authenticated)
 		client_printf(client, "IHAVE\r\nSTREAMING\r\n");

@@ -78,6 +78,7 @@ extern uv_loop_t	*loop;
 extern char		*pid_file;
 extern char		*control_path;
 
+extern char		 version_string[];
 extern const char	*buildhost,
        			*builddate,
 			*builder;

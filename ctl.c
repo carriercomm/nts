@@ -139,7 +139,7 @@ char		*cmd;
 		return;
 
 	if (strcmp(cmd, "version") == 0) {
-		ctl_printf(ctl, "OK\n%s\n", PACKAGE_VERSION);
+		ctl_printf(ctl, "OK\n%s\n", version_string);
 	} else if (strcmp(cmd, "peers") == 0) {
 		ctl_printf(ctl, "OK\n");
 		ctl_do_peer_stats(ctl);
@@ -159,8 +159,8 @@ char		*cmd;
 	} else if (strcmp(cmd, "stats") == 0) {
 	time_t	now = time(NULL);
 		ctl_printf(ctl, "OK\n");
-		ctl_printf(ctl, "RT/NTS %s statistics as of %s",
-				PACKAGE_VERSION, ctime(&now));
+		ctl_printf(ctl, "%s statistics as of %s",
+				version_string, ctime(&now));
 		ctl_printf(ctl, "=========================================="
 				"==================\n");
 		ctl_printf(ctl, "\n%s\n\n", get_uptime());
