@@ -39,7 +39,7 @@ SRCS		= nts.c		config.c	ctl.c		client.c	\
 		  crc.c		wildmat.c	filter.c	feeder.c	\
 		  charq.c	rfile.c		auth.c				\
 		  crypt.c	strlcpy.c	emp.c				\
-		  base64.c							\
+		  base64.c	arc4random.c					\
 		  client_authinfo.c	client_mode.c	client_listen.c		\
 		  client_pending.c	client_reader.c	client_capab.c		\
 		  client_check.c	client_ihave.c	client_help.c		\

@@ -86,8 +86,13 @@ extern const char	*buildhost,
 #ifndef HAVE_STRLCPY
 size_t strlcpy(char *, const char *, size_t);
 #endif
+
 #ifndef HAVE_STRLCAT
 size_t strlcat(char *dst, const char *src, size_t size);
+#endif
+
+#ifndef HAVE_ARC4RANDOM
+uint32_t arc4random(void);
 #endif
 
 /*
