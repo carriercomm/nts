@@ -44,7 +44,16 @@
 #include	"auth.h"
 #include	"article.h"
 #include	"ctl.h"
+
 #include	"ntsmsg.h"
+#include	"dbmsg.h"
+#include	"clientmsg.h"
+#include	"authmsg.h"
+#include	"dbmsg.h"
+#include	"configmsg.h"
+#include	"spoolmsg.h"
+#include	"historymsg.h"
+#include	"logmsg.h"
 
 static void	*server_stanza_start(conf_stanza_t *, void *);
 static void	 server_set_common_paths(conf_stanza_t *, conf_option_t *, void *, void *);
@@ -819,6 +828,20 @@ char	sev, subsys[32] = {}, mid[32] = {};
 	/* Perhaps we should have a list of message facilities? */
 	if (!*subsys || strcmp(subsys, "NTS") == 0)
 		explain_msg_fac(NTS_fac, mid);
+	if (!*subsys || strcmp(subsys, "AUTH") == 0)
+		explain_msg_fac(AUTH_fac, mid);
+	if (!*subsys || strcmp(subsys, "CLIENT") == 0)
+		explain_msg_fac(CLIENT_fac, mid);
+	if (!*subsys || strcmp(subsys, "CONFIG") == 0)
+		explain_msg_fac(CONFIG_fac, mid);
+	if (!*subsys || strcmp(subsys, "DB") == 0)
+		explain_msg_fac(DB_fac, mid);
+	if (!*subsys || strcmp(subsys, "HISTORY") == 0)
+		explain_msg_fac(HISTORY_fac, mid);
+	if (!*subsys || strcmp(subsys, "LOG") == 0)
+		explain_msg_fac(LOG_fac, mid);
+	if (!*subsys || strcmp(subsys, "SPOOL") == 0)
+		explain_msg_fac(SPOOL_fac, mid);
 }
 
 static void
