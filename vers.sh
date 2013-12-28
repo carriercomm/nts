@@ -8,7 +8,7 @@ else
 	U=`whoami`
 fi
 
-D=`date '+%d-%b-%Y %H:%M:%S'`
+D=`date '+%d-%b-%Y %H:%M:%S %Z'`
 H=`hostname`
 
 cat >vers.c <<EOF
