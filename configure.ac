@@ -14,6 +14,36 @@ AC_CONFIG_HEADERS([setup.h])
 
 AC_CANONICAL_HOST
 
+case $host_os in
+	aix*)
+		UV_EXTRA_SRCS="aix.c"
+		;;
+	darwin*)
+		CPPFLAGS="$CPPFLAGS -D_DARWIN_USE_64_BIT_INODE=1"
+		UV_EXTRA_SRCS="darwin.c darwin-proctitle.c fsevents.c kqueue.c proctitle.c"
+		;;
+	freebsd*)
+		UV_EXTRA_SRCS="freebsd.c kqueue.c"
+		;;
+	linux*)
+		CPPFLAGS="$CPPFLAGS -D_GNU_SOURCE"
+		UV_EXTRA_SRCS="linux-core.c linux-inotify.c linux-syscalls.c proctitle.c"
+		;;
+	netbsd*)
+		UV_EXTRA_SRCS="netbsd.c kqueue.c"
+		;;
+	openbsd*)
+		UV_EXTRA_SRCS="openbsd.c kqueue.c"
+		;;
+	solaris*)
+		CPPFLAGS="$CPPFLAGS -D__EXTENSIONS__ -D_XOPEN_SOURCE=500"
+		UV_EXTRA_SRCS="sunos.c"
+		;;
+	*)
+		AC_ERROR([unsupported operating system])
+		;;
+esac
+
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_LEX
@@ -178,35 +208,6 @@ AC_TRY_RUN(
 )
 
 AC_SUBST(EXTRA_SRCS)
-
-case $host_os in
-	aix*)
-		UV_EXTRA_SRCS="aix.c"
-		;;
-	darwin*)
-		CPPFLAGS="$CPPFLAGS -D_DARWIN_USE_64_BIT_INODE=1"
-		UV_EXTRA_SRCS="darwin.c darwin-proctitle.c fsevents.c kqueue.c proctitle.c"
-		;;
-	freebsd*)
-		UV_EXTRA_SRCS="freebsd.c kqueue.c"
-		;;
-	linux*)
-		UV_EXTRA_SRCS="linux-core.c linux-inotify.c linux-syscalls.c proctitle.c"
-		;;
-	netbsd*)
-		UV_EXTRA_SRCS="netbsd.c kqueue.c"
-		;;
-	openbsd*)
-		UV_EXTRA_SRCS="openbsd.c kqueue.c"
-		;;
-	solaris*)
-		CPPFLAGS="$CPPFLAGS -D__EXTENSIONS__ -D_XOPEN_SOURCE=500"
-		UV_EXTRA_SRCS="sunos.c"
-		;;
-	*)
-		AC_ERROR([unsupported operating system])
-		;;
-esac
 
 AC_SUBST(UV_EXTRA_SRCS)
 
