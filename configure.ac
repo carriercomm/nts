@@ -12,11 +12,29 @@ AC_INIT([RT/NTS], [D.1.1], [river@loreley.flyingparchment.org.uk])
 AC_CONFIG_SRCDIR([nts.c])
 AC_CONFIG_HEADERS([setup.h])
 
+AC_CANONICAL_HOST
+
 # Checks for programs.
 AC_PROG_CC
 AC_PROG_LEX
 AC_PROG_YACC
 AC_PROG_INSTALL
+AC_PROG_RANLIB
+
+# Libraries NTS uses
+AC_CHECK_LIB([socket], [socket])
+AC_CHECK_LIB([rt], [clock_gettime])
+
+# Libraries libuv uses
+AC_CHECK_LIB([dl], [dlopen], [UV_LIBS="$UV_LIBS -ldl"])
+AC_CHECK_LIB([kstat], [kstat_lookup], [UV_LIBS="$UV_LIBS -lkstat"])
+AC_CHECK_LIB([kvm], [kvm_open], [UV_LIBS="$UV_LIBS -lkvm"])
+AC_CHECK_LIB([nsl], [gethostbyname], [UV_LIBS="$UV_LIBS -lnsl"])
+AC_CHECK_LIB([perfstat], [perfstat_cpu], [UV_LIBS="$UV_LIBS -lperfstat"])
+AC_CHECK_LIB([pthread], [pthread_mutex_init], [UV_LIBS="$UV_LIBS -lpthread"])
+AC_CHECK_LIB([sendfile], [sendfile], [UV_LIBS="$UV_LIBS -lsendfile"])
+
+AC_SYS_LARGEFILE
 
 AC_CHECK_MEMBER([struct sockaddr_in.sin_len],
 	AC_DEFINE([HAVE_SIN_LEN], 1, [Define if struct sockaddr_in has a sin_len member]),
@@ -49,9 +67,6 @@ if test "$use_ssl" = yes; then
 	      AC_DEFINE([HAVE_OPENSSL], 1, [Define if OpenSSL is present])
 	     ])
 fi
-
-AC_CHECK_LIB([uv], [uv_run], [], [AC_MSG_ERROR([cannot find libuv])])
-AC_CHECK_HEADER([uv.h], [], [AC_MSG_ERROR([cannot find uv.h])])
 
 AC_CHECK_LIB([z], [compress], [], [AC_MSG_ERROR([cannot find zlib])])
 AC_CHECK_HEADER([zlib.h], [], [AC_MSG_ERROR([cannot find zlib.h])])
@@ -163,6 +178,37 @@ AC_TRY_RUN(
 )
 
 AC_SUBST(EXTRA_SRCS)
+
+case $host_os in
+	aix*)
+		UV_EXTRA_SRCS="aix.c"
+		;;
+	darwin*)
+		CPPFLAGS="$CPPFLAGS -D_DARWIN_USE_64_BIT_INODE=1"
+		UV_EXTRA_SRCS="darwin.c darwin-proctitle.c fsevents.c kqueue.c proctitle.c"
+		;;
+	freebsd*)
+		UV_EXTRA_SRCS="freebsd.c kqueue.c"
+		;;
+	linux*)
+		UV_EXTRA_SRCS="linux-core.c linux-inotify.c linux-syscalls.c linux-syscalls.h proctitle.c"
+		;;
+	netbsd*)
+		UV_EXTRA_SRCS="netbsd.c kqueue.c"
+		;;
+	openbsd*)
+		UV_EXTRA_SRCS="openbsd.c kqueue.c"
+		;;
+	solaris*)
+		CPPFLAGS="$CPPFLAGS -D__EXTENSIONS__ -D_XOPEN_SOURCE=500"
+		UV_EXTRA_SRCS="sunos.c"
+		;;
+	*)
+		AC_ERROR([unsupported operating system])
+		;;
+esac
+
+AC_SUBST(UV_EXTRA_SRCS)
 
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT

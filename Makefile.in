@@ -16,14 +16,14 @@ bindir		= @bindir@
 sbindir		= @sbindir@
 sysconfdir	= @sysconfdir@
 
-VPATH		= ${top_srcdir}:${top_srcdir}/client:${top_srcdir}/msg
+VPATH		= ${top_srcdir}:${top_srcdir}/client:${top_srcdir}/msg:${top_srcdir}/uv/src
 
 CC		= @CC@
 MAKEDEPEND	= @CC@ -MM
 INSTALL		= @INSTALL@
 CFLAGS		= @CFLAGS@
 LDFLAGS		= @LDFLAGS@
-CPPFLAGS	= @CPPFLAGS@ -I@top_srcdir@ -I.	\
+CPPFLAGS	= @CPPFLAGS@ -I@top_srcdir@ -I.	-I${top_srcdir}/uv/include \
 		  -DSYSCONFDIR=\"@sysconfdir@\"
 LIBS		= @LIBS@
 
@@ -48,7 +48,6 @@ SRCS		= nts.c		config.c	ctl.c		client.c	\
 		  incoming.c
 
 EXTRA_SRCS	= @EXTRA_SRCS@
-OBJS		= ${MSGS:.M=.o} ${SRCS:.c=.o} ${EXTRA_SRCS:.c=.o}
 
 HDRS		= article.h config.h database.h filter.h history.h 		\
 		  client.h crc.h feeder.h hash.h log.h nts.h server.h		\
@@ -56,6 +55,14 @@ HDRS		= article.h config.h database.h filter.h history.h 		\
 		  crypt.h emp.h base64.h
 EXTRA_DIST	= Makefile.in nts.conf.example parser.y lexer.l setup.h.in	\
 		  configure.ac configure LICENSE strlcpy.c 
+
+UV_SRCS		= async.c core.c dl.c fs.c getaddrinfo.c loop.c			\
+		  loop-watcher.c pipe.c poll.c process.c signal.c stream.c	\
+		  tcp.c thread.c threadpool.c timer.c tty.c udp.c uv-common.c	\
+		  version.c fs-poll.c inet.c @UV_EXTRA_SRCS@
+
+OBJS		= ${MSGS:.M=.o} ${SRCS:.c=.o} ${EXTRA_SRCS:.c=.o} ${UV_SRCS:.c=.o}
+
 all: msgcomp nts
 
 dist: ${SRCS} ${HDRS} ${EXTRA_DIST}
