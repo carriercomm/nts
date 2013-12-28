@@ -1,10 +1,10 @@
 !NTS 7
 
-STARTUP	I	NTS %1$s starting up
+STARTUP	I	%1$s starting up
 The NTS system has been started, but is not yet running.
 .
 
-RUNNING	I	NTS %1$s [%2$s] running
+RUNNING	I	%1$s [%2$s] running
 NTS has finished starting up and is now ready for processing.
 .
 

@@ -361,7 +361,7 @@ char		*s;
 		fclose(pidf);
 	}
 
-	nts_logm(NTS_fac, M_NTS_RUNNING, PACKAGE_VERSION, pathhost);
+	nts_logm(NTS_fac, M_NTS_RUNNING, version_string, pathhost);
 
 	uv_run(loop, UV_RUN_DEFAULT);
 	return 0;
