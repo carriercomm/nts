@@ -139,6 +139,11 @@ typedef struct client {
 
 typedef SIMPLEQ_HEAD(client_list, client) client_list_t;
 
+typedef struct client_write_req {
+	client_t	*client;
+	char		*buf;
+} client_write_req_t;
+
 int	client_init(void);
 int	client_run(void);
 
@@ -178,7 +183,16 @@ void	 client_unpause(client_t *);
 
 void	 client_do_replies(uv_async_t *, int);
 
+#ifdef	HAVE_OPENSSL
 void	 client_tls_accept(client_t *);
+void	 client_tls_flush(client_t *);
+void	 client_tls_write_pending(client_t *);
+#endif
+
+void	 on_client_read(uv_stream_t *, ssize_t, uv_buf_t const *);
+void	 on_client_write_done(uv_write_t *, int);
+void	 on_client_close_done(uv_handle_t *);
+void	 on_client_shutdown_done(uv_shutdown_t *, int);
 
 /*
  * Client command handlers.

@@ -50,20 +50,12 @@
 #include	"incoming.h"
 #include	"clientmsg.h"
 
-static void	 on_client_read(uv_stream_t *, ssize_t, uv_buf_t const *);
-static void	 on_client_write_done(uv_write_t *, int);
-static void	 on_client_close_done(uv_handle_t *);
-static void	 on_client_shutdown_done(uv_shutdown_t *, int);
-
 static client_t	*client_new(uv_tcp_t *);
 static void	 client_vprintf(client_t *, char const *, va_list ap);
 static void	 client_vlog(int sev, client_t *, char const *, va_list ap);
 static void	 client_puts(client_t *, void *, size_t);
 static void	 client_handle_io(client_t *);
 static void	 client_handle_line(client_t *, char *);
-#ifdef	HAVE_OPENSSL
-static void	 client_tls_flush(client_t *);
-#endif
 
 typedef void (*cmd_handler) (client_t *, char *, char *);
 
@@ -82,11 +74,6 @@ static struct {
 	{ "STARTTLS",		c_starttls,	0 },
 	{ "HELP",		c_help,		0 },
 };
-
-typedef struct client_write_req {
-	client_t	*client;
-	char		*buf;
-} client_write_req_t;
 
 int
 client_init()
@@ -235,103 +222,7 @@ int			 addrlen = sizeof(addr);
 		client_logm(CLIENT_fac, M_CLIENT_CONNECT, cl);
 }
 
-#ifdef	HAVE_OPENSSL
-static void
-client_write_tls_pending(cl)
-	client_t	*cl;
-{
-client_write_req_t	*req;
-uv_write_t		*wr;
-uv_buf_t		 ubuf;
-BUF_MEM			*bptr;
-
-	client_tls_flush(cl);
-
-	if (DEBUG(CIO))
-		client_log(LOG_DEBUG, cl, "client_write_tls_pending cq_len=%d bio_out=%d",
-			   (int) cq_len(cl->cl_wrbuf),
-			   (int) BIO_ctrl_pending(cl->cl_bio_out));
-
-	if (!BIO_ctrl_pending(cl->cl_bio_out))
-		return;
-
-	req = xcalloc(1, sizeof(*req));
-	wr = xcalloc(1, sizeof(*wr));
-
-	BIO_get_mem_ptr(cl->cl_bio_out, &bptr);
-
-	ubuf = uv_buf_init(bptr->data, bptr->length);
-
-	req->client = cl;
-	req->buf = bptr->data;
-
-	bptr->data = NULL;
-	bptr->length = bptr->max = 0;
-
-	wr->data = req;
-	uv_write(wr, (uv_stream_t *) cl->cl_stream, &ubuf, 1, on_client_write_done);
-}
-
 void
-client_tls_accept(cl)
-	client_t	*cl;
-{
-int	ret, err;
-
-	ret = SSL_accept(cl->cl_ssl);
-	if (DEBUG(CIO))
-		client_log(LOG_DEBUG, cl,
-			   "client_tls_accept: ret=%d",
-			   (int) ret);
-
-	if (ret == 1) {
-		if (DEBUG(CIO))
-			client_log(LOG_DEBUG, cl, "SSL_accept done");
-		if (log_incoming_connections) {
-			if (cl->cl_listener->li_ssl_type == SSL_ALWAYS)
-				client_logm(CLIENT_fac, M_CLIENT_CONNTLS, cl,
-					    SSL_get_cipher_version(cl->cl_ssl),
-					    SSL_get_cipher_name(cl->cl_ssl));
-			else
-				client_logm(CLIENT_fac, M_CLIENT_STARTTLS, cl,
-					    SSL_get_cipher_version(cl->cl_ssl),
-					    SSL_get_cipher_name(cl->cl_ssl));
-		}
-		cl->cl_flags &= ~CL_SSL_ACPTING;
-		client_write_tls_pending(cl);
-		return;
-	}
-
-	err = SSL_get_error(cl->cl_ssl, ret);
-
-	switch (err) {
-	case SSL_ERROR_WANT_READ:
-		if (DEBUG(CIO))
-			client_log(LOG_DEBUG, cl,
-				   "client_tls_accept: SSL_ERROR_WANT_READ "
-				   "in pending=%d out pending=%d",
-				   (int) BIO_ctrl_pending(cl->cl_bio_in),
-				   (int) BIO_ctrl_pending(cl->cl_bio_out));
-		client_write_tls_pending(cl);
-		return;
-
-	case SSL_ERROR_WANT_WRITE:
-		if (DEBUG(CIO))
-			client_log(LOG_DEBUG, cl,
-				   "client_tls_accept: SSL_ERROR_WANT_WRITE");
-		client_write_tls_pending(cl);
-		return;
-
-	default:
-		client_logm(CLIENT_fac, M_CLIENT_TLSERR, cl,
-			    ERR_error_string(ERR_get_error(), NULL));
-		client_close(cl, 0);
-		return;
-	}
-}
-#endif	/* !HAVE_OPENSSL */
-
-static void
 on_client_read(stream, nread, buf)
 	uv_stream_t	*stream;
 	ssize_t		 nread;
@@ -375,7 +266,7 @@ client_t	*cl = stream->data;
 	char	*rdbuf = xmalloc(SSL_RDBUF);
 	int	 ret, err;
 
-		client_write_tls_pending(cl);
+		client_tls_write_pending(cl);
 
 		if (BIO_write(cl->cl_bio_in, buf->base, nread) <= 0) {
 			if (log_incoming_connections)
@@ -411,14 +302,14 @@ client_t	*cl = stream->data;
 						   "in pending=%d out pending=%d",
 						   (int) BIO_ctrl_pending(cl->cl_bio_in),
 						   (int) BIO_ctrl_pending(cl->cl_bio_out));
-				client_write_tls_pending(cl);
+				client_tls_write_pending(cl);
 				return;
 
 			case SSL_ERROR_WANT_WRITE:
 				if (DEBUG(CIO))
 					client_log(LOG_DEBUG, cl,
 						   "on_client_read: SSL_ERROR_WANT_WRITE");
-				client_write_tls_pending(cl);
+				client_tls_write_pending(cl);
 				return;
 
 			default:
@@ -432,7 +323,7 @@ client_t	*cl = stream->data;
 		} else {
 			cq_append(cl->cl_rdbuf, rdbuf, ret);
 		}
-		client_write_tls_pending(cl);
+		client_tls_write_pending(cl);
 	} else
 #endif
 		cq_append(cl->cl_rdbuf, buf->base, nread);
@@ -632,7 +523,7 @@ va_list	ap;
 	va_end(ap);
 }
 
-static void
+void
 on_client_write_done(wr, status)
 	uv_write_t	*wr;
 {
@@ -685,65 +576,6 @@ int			 len;
 	client_puts(client, buf, len + 1);
 }
 
-#ifdef	HAVE_OPENSSL
-static void
-client_tls_flush(cl)
-	client_t	*cl;
-{
-int	ret, err;
-
-	if (DEBUG(CIO))
-		client_log(LOG_DEBUG, cl, "client_tls_flush");
-
-	if (cl->cl_flags & CL_SSL_ACPTING)
-		return;
-
-	if (!cq_len(cl->cl_wrbuf))
-		return;
-
-	while (cq_len(cl->cl_wrbuf)) {
-	charq_ent_t	*cqe = cq_first_ent(cl->cl_wrbuf);
-
-		ret = SSL_write(cl->cl_ssl, cqe->cqe_data, cqe->cqe_len);
-
-		if (DEBUG(CIO))
-			client_log(LOG_DEBUG, cl, "client_puts: SSL_write wrote %d",
-				   ret);
-
-		if (ret <= 0)
-			break;
-
-		cq_remove_start(cl->cl_wrbuf, cqe->cqe_len);
-
-		if (cq_len(cl->cl_wrbuf) == 0)
-			return;
-	}
-
-	if (ret <= 0) {
-		err = SSL_get_error(cl->cl_ssl, ret);
-		switch (err) {
-		case SSL_ERROR_WANT_READ:
-			if (DEBUG(CIO))
-				client_log(LOG_DEBUG, cl,
-					   "client_puts: SSL_ERROR_WANT_READ");
-			break;
-
-		case SSL_ERROR_WANT_WRITE:
-			if (DEBUG(CIO))
-				client_log(LOG_DEBUG, cl,
-					   "client_puts: SSL_ERROR_WANT_WRITE");
-			break;
-
-		default:
-			client_logm(CLIENT_fac, M_CLIENT_TLSERR, cl,
-				    ERR_error_string(ERR_get_error(), NULL));
-			break;
-		}
-		return;
-	}
-}
-#endif	/* !HAVE_OPENSSL */
-
 static void
 client_puts(cl, buf, sz)
 	client_t	*cl;
@@ -762,7 +594,7 @@ client_write_req_t	*cwr;
 		nb = xmalloc(sz);
 		bcopy(buf, nb, sz);
 		cq_append(cl->cl_wrbuf, nb, sz);
-		client_write_tls_pending(cl);
+		client_tls_write_pending(cl);
 		return;
 	}
 #endif
@@ -806,7 +638,7 @@ client_t	*cl;
 	return cl;
 }
 
-static void 
+void 
 on_client_shutdown_done(req, status)
 	uv_shutdown_t	*req;
 {
@@ -824,7 +656,7 @@ client_t	*cl = stream->data;
 	uv_close((uv_handle_t *) stream, on_client_close_done);
 }
 
-static void
+void
 on_client_close_done(handle)
 	uv_handle_t	*handle;
 {
@@ -850,7 +682,7 @@ client_close(cl, drain)
 		if (!(cl->cl_flags & CL_SSL_SHUTDN)) {
 			SSL_shutdown(cl->cl_ssl);
 			cl->cl_flags |= CL_SSL_SHUTDN;
-			client_write_tls_pending(cl);
+			client_tls_write_pending(cl);
 			return;
 		}
 #endif
