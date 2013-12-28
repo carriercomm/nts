@@ -17,7 +17,7 @@
 #include	<stdarg.h>
 #include	<inttypes.h>
 
-#include	<uv.h>
+#include	"uv.h"
 
 #include	"queue.h"
 #include	"setup.h"

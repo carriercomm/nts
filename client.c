@@ -23,7 +23,7 @@
 #include	<fcntl.h>
 #include	<pthread.h>
 
-#include	<uv.h>
+#include	"uv.h"
 
 #include	"setup.h"
 

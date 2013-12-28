@@ -16,8 +16,7 @@
 
 #include	<stdlib.h>
 
-#include	<ev.h>
-#include	<uv.h>
+#include	"uv.h"
 
 #include	"setup.h"
 

@@ -14,7 +14,7 @@
 
 #include	<unistd.h>
 
-#include	<uv.h>
+#include	"uv.h"
 
 #include	"nts.h"
 #include	"ctl.h"

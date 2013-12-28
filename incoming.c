@@ -9,7 +9,7 @@
  */
 
 #include	<pthread.h>
-#include	<uv.h>
+#include	"uv.h"
 
 #include	"incoming.h"
 #include	"client.h"
