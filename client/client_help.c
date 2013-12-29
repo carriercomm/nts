@@ -27,6 +27,7 @@ c_help(client, cmd, line)
 		"  HELP\r\n"
 		"  IHAVE <msg-id>\r\n"
 		"  MODE STREAM\r\n"
+		"  MODE READER\r\n"
 		"  QUIT\r\n"
 		"  TAKETHIS <msg-id>\r\n"
 #ifdef	HAVE_OPENSSL
