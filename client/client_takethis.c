@@ -133,7 +133,7 @@ artbuf_t	*buf;
 					      buf->ab_msgid);
 			else
 				client_printf(cl, "%d %s\r\n",
-					      (buf->ab_type == AB_TAKETHIS) ? 339 : 437,
+					      (buf->ab_type == AB_TAKETHIS) ? 439 : 437,
 					      buf->ab_msgid);
 		}
 
