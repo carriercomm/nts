@@ -345,46 +345,6 @@ client_handle_io(cl)
 	for (;;) {
 	char	*ln;
 
-		if (DEBUG(CIO))
-			client_log(LOG_DEBUG, cl, "on_client_read: reading article: %d"
-					          ", buffer: %p, nbuffered: %d, state: %d",
-				   cl->cl_state == CS_TAKETHIS || cl->cl_state == CS_IHAVE,
-				   TAILQ_FIRST(cl->cl_buffer),
-				   cl->cl_nbuffered,
-				   cl->cl_state);
-
-		if (cl->cl_nbuffered >= cl->cl_server->se_buffer) {
-			if (DEBUG(CIO))
-				client_log(LOG_DEBUG, cl, "on_client_read: article buffer full");
-			client_pause(cl);
-			break;
-		}
-
-		/*
-		 * We check last_was_dot here because otherwise we return from 
-		 * client_handle_line(cl, ".") after a TAKETHIS, and since the
-		 * client state is no longer CS_TAKETHIS, we interpret the "."
-		 * as a command, and attempt to buffer an article, thereby
-		 * sending an unwanted 239 reply.  last_was_dot tracks if the
-		 * last line read was "."; if it is, we skip the buffering.
-		 *
-		 * This is a hack and should be replaced with something better!
-		 */
-		if (cl->cl_nbuffered > 1 &&
-		    !(cl->cl_state == CS_TAKETHIS || cl->cl_state == CS_IHAVE) &&
-		    !cl->cl_last_was_dot) {
-		msglist_t	*msg = TAILQ_FIRST(&cl->cl_msglist);
-
-			if (DEBUG(CIO))
-				client_log(LOG_DEBUG, cl, "on_client_read: buffering 1");
-
-			client_printf(cl, "%d %s\r\n",
-				      (msg->ml_type == AB_TAKETHIS) ? 239 : 235,
-				      msg->ml_msgid);
-		}
-
-		cl->cl_last_was_dot = 0;
-
 		if ((ln = cq_read_line(cl->cl_rdbuf)) == NULL)
 			break;
 
@@ -398,12 +358,6 @@ client_handle_io(cl)
 
 		if (cl->cl_flags & (CL_DEAD | CL_PAUSED))
 			break;
-	}
-
-	if (TAILQ_FIRST(cl->cl_buffer)) {
-		process_article(cl, cl->cl_buffer);
-		cl->cl_buffer = xcalloc(1, sizeof(*cl->cl_buffer));
-		TAILQ_INIT(cl->cl_buffer);
 	}
 }
 
@@ -437,10 +391,9 @@ client_handle_line(cl, line)
 
 		client_printf(cl, "500 Unknown command.\r\n");
 	} else if (cl->cl_state == CS_TAKETHIS || cl->cl_state == CS_IHAVE) {
-	artbuf_t	*buf = TAILQ_LAST(cl->cl_buffer, artbuf_list);
+	artbuf_t	*buf = cl->cl_buffer;
 
 		if (strcmp(line, ".") == 0) {
-			cl->cl_last_was_dot = 1;
 			client_takethis_done(cl);
 		} else {
 			if (buf->ab_len <= max_article_size) {
@@ -633,8 +586,6 @@ client_t	*cl;
 #ifdef	HAVE_OPENSSL
 	cl->cl_wrbuf = cq_new();
 #endif
-	TAILQ_INIT(cl->cl_buffer);
-	TAILQ_INIT(&cl->cl_msglist);
 	return cl;
 }
 
@@ -661,9 +612,6 @@ on_client_close_done(handle)
 	uv_handle_t	*handle;
 {
 client_t	*cl = handle->data;
-
-	if (cl->cl_nbuffered)
-		return;
 
 	client_destroy(cl);
 }
@@ -713,18 +661,10 @@ msglist_t	*msg;
 		SIMPLEQ_REMOVE(&client->cl_server->se_clients, client, client, cl_list);
 	}
 
-	while (buf = TAILQ_FIRST(client->cl_buffer)) {
-		TAILQ_REMOVE(client->cl_buffer, buf, ab_list);
-		free(buf->ab_msgid);
-		free(buf->ab_text);
-		free(buf);
-	}
-	free(client->cl_buffer);
-
-	while (msg = TAILQ_FIRST(&client->cl_msglist)) {
-		TAILQ_REMOVE(&client->cl_msglist, msg, ml_list);
-		free(msg->ml_msgid);
-		free(msg);
+	if (client->cl_buffer) {
+		free(client->cl_buffer->ab_msgid);
+		free(client->cl_buffer->ab_text);
+		free(client->cl_buffer);
 	}
 
 	pending_remove_client(client);

@@ -54,11 +54,7 @@ typedef struct artbuf {
 	struct client	*ab_client;
 	ab_type_t	 ab_type;
 	int		 ab_status;
-	TAILQ_ENTRY(artbuf)
-			 ab_list;
 } artbuf_t;
-
-typedef TAILQ_HEAD(artbuf_list, artbuf) artbuf_list_t;
 
 typedef struct msglist {
 	char		*ml_msgid;
@@ -120,12 +116,9 @@ typedef struct client {
 	socklen_t	 cl_addrlen;
 	int		 cl_flags;
 	listener_t	*cl_listener;
-	artbuf_list_t	*cl_buffer;
-	int		 cl_nbuffered;
-	msglist_list_t	 cl_msglist;
+	artbuf_t	*cl_buffer;
 
 	charq_t		*cl_rdbuf;
-	int		 cl_last_was_dot; /* XXX awful: see client_handle_io() */
 
 #ifdef HAVE_OPENSSL
 	SSL		*cl_ssl;
@@ -147,7 +140,7 @@ typedef struct client_write_req {
 int	client_init(void);
 int	client_run(void);
 
-void	client_incoming_reply(client_t *, artbuf_list_t *);
+void	client_incoming_reply(client_t *, artbuf_t *);
 
 /*
  * Internal functions.

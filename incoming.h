@@ -20,7 +20,7 @@
 #define	IN_ERR_CANNOT_PARSE	4
 
 struct artbuf;
-void	process_article(client_t *, artbuf_list_t *);
+void	process_article(client_t *, artbuf_t *);
 
 int	incoming_init(void);
 void	incoming_run(void);

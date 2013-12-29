@@ -18,7 +18,7 @@
 #include	"emp.h"
 
 typedef struct incoming_work {
-	artbuf_list_t	*iw_artbuf;
+	artbuf_t	*iw_artbuf;
 	client_t	*iw_client;
 } incoming_work_t;
 
@@ -45,8 +45,7 @@ on_new_work(req)
 incoming_work_t	*iw = req->data;
 artbuf_t	*buf;
 
-	TAILQ_FOREACH(buf, iw->iw_artbuf, ab_list)
-		buf->ab_status = handle_one_article(buf);
+	iw->iw_artbuf->ab_status = handle_one_article(iw->iw_artbuf);
 }
 
 static int
@@ -127,7 +126,7 @@ char		*filter_name;
 void
 process_article(client, artbuf)
 	client_t	*client;
-	artbuf_list_t	*artbuf;
+	artbuf_t	*artbuf;
 {
 incoming_work_t	*iw = xcalloc(1, sizeof(*iw));
 uv_work_t	*req = xcalloc(1, sizeof(*req));
