@@ -363,7 +363,7 @@ server_t	*server = udata;
 	if (server->se_buffer == -1 && default_server && default_server->se_buffer > 0)
 		server->se_buffer = default_server->se_buffer;
 	else
-		server->se_buffer = 0;
+		server->se_buffer = 1;
 
 	if (SLIST_EMPTY(&server->se_exclude)) {
 	hostlist_entry_t	*hl = xcalloc(1, sizeof(*hl));
