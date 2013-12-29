@@ -71,10 +71,6 @@ char		*filter_name;
 	age = (time(NULL) - article->art_date);
 	oldest = history_remember - 60 * 60 * 24;
 	if (age > oldest) {
-		client_log(LOG_NOTICE, buf->ab_client,
-			   "%s: too old (%d days)",
-			   article->art_msgid,
-			   (int) age / 60 / 60 / 24);
 		log_article(article->art_msgid, NULL,
 			    buf->ab_client->cl_server,
 			    '-', "too-old");
