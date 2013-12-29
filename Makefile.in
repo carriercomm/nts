@@ -117,10 +117,6 @@ msgcomp: msgcomp.o
 vers.c:	vers.sh
 	sh ${top_srcdir}/vers.sh
 
-db.c: dbmsg.h
-spool.c: spoolmsg.h
-nts.c: ntsmsg.h
-
 clean:
 	rm -f nts $(OBJS) $(SRCS:.c=.d) lex.yy.c lex.yy.o y.tab.o y.tab.h y.tab.c
 	rm -f msgcomp ${MSGS:.M=.c} ${MSGS:.M=.h} ${MSGS:.M=.o}
