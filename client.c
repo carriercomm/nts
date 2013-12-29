@@ -371,7 +371,7 @@ client_handle_io(cl)
 		 * This is a hack and should be replaced with something better!
 		 */
 		if (cl->cl_nbuffered > 1 &&
-		    !(cl->cl_state== CS_TAKETHIS || cl->cl_state == CS_IHAVE) &&
+		    !(cl->cl_state == CS_TAKETHIS || cl->cl_state == CS_IHAVE) &&
 		    !cl->cl_last_was_dot) {
 		msglist_t	*msg = TAILQ_FIRST(&cl->cl_msglist);
 
