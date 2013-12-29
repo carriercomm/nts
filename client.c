@@ -679,7 +679,7 @@ client_close(cl, drain)
 	uv_shutdown_t	*req;
 
 #ifdef	HAVE_OPENSSL
-		if (!(cl->cl_flags & CL_SSL_SHUTDN)) {
+		if (!(cl->cl_flags & CL_SSL_SHUTDN) && (cl->cl_flags & CL_SSL)) {
 			SSL_shutdown(cl->cl_ssl);
 			cl->cl_flags |= CL_SSL_SHUTDN;
 			client_tls_write_pending(cl);
