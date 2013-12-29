@@ -57,13 +57,13 @@ AC_CHECK_LIB([rt], [clock_gettime])
 AC_CHECK_LIB([m], [sqrt])
 
 # Libraries libuv uses
-AC_CHECK_LIB([dl], [dlopen], [UV_LIBS="$UV_LIBS -ldl"])
-AC_CHECK_LIB([kstat], [kstat_lookup], [UV_LIBS="$UV_LIBS -lkstat"])
-AC_CHECK_LIB([kvm], [kvm_open], [UV_LIBS="$UV_LIBS -lkvm"])
-AC_CHECK_LIB([nsl], [gethostbyname], [UV_LIBS="$UV_LIBS -lnsl"])
-AC_CHECK_LIB([perfstat], [perfstat_cpu], [UV_LIBS="$UV_LIBS -lperfstat"])
-AC_CHECK_LIB([pthread], [pthread_mutex_init], [UV_LIBS="$UV_LIBS -lpthread"])
-AC_CHECK_LIB([sendfile], [sendfile], [UV_LIBS="$UV_LIBS -lsendfile"])
+AC_CHECK_LIB([dl], [dlopen], [LIBS="$LIBS -ldl"])
+AC_CHECK_LIB([kstat], [kstat_lookup], [LIBS="$LIBS -lkstat"])
+AC_CHECK_LIB([kvm], [kvm_open], [LIBS="$LIBS -lkvm"])
+AC_CHECK_LIB([nsl], [gethostbyname], [LIBS="$LIBS -lnsl"])
+AC_CHECK_LIB([perfstat], [perfstat_cpu], [LIBS="$LIBS -lperfstat"])
+AC_CHECK_LIB([pthread], [pthread_mutex_init], [LIBS="$LIBS -lpthread"])
+AC_CHECK_LIB([sendfile], [sendfile], [LIBS="$LIBS -lsendfile"])
 
 AC_SYS_LARGEFILE
 

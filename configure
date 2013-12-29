@@ -3677,7 +3677,7 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_dl_dlopen" >&5
 $as_echo "$ac_cv_lib_dl_dlopen" >&6; }
 if test "x$ac_cv_lib_dl_dlopen" = xyes; then :
-  UV_LIBS="$UV_LIBS -ldl"
+  LIBS="$LIBS -ldl"
 fi
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for kstat_lookup in -lkstat" >&5
@@ -3717,7 +3717,7 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_kstat_kstat_lookup" >&5
 $as_echo "$ac_cv_lib_kstat_kstat_lookup" >&6; }
 if test "x$ac_cv_lib_kstat_kstat_lookup" = xyes; then :
-  UV_LIBS="$UV_LIBS -lkstat"
+  LIBS="$LIBS -lkstat"
 fi
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for kvm_open in -lkvm" >&5
@@ -3757,7 +3757,7 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_kvm_kvm_open" >&5
 $as_echo "$ac_cv_lib_kvm_kvm_open" >&6; }
 if test "x$ac_cv_lib_kvm_kvm_open" = xyes; then :
-  UV_LIBS="$UV_LIBS -lkvm"
+  LIBS="$LIBS -lkvm"
 fi
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for gethostbyname in -lnsl" >&5
@@ -3797,7 +3797,7 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_nsl_gethostbyname" >&5
 $as_echo "$ac_cv_lib_nsl_gethostbyname" >&6; }
 if test "x$ac_cv_lib_nsl_gethostbyname" = xyes; then :
-  UV_LIBS="$UV_LIBS -lnsl"
+  LIBS="$LIBS -lnsl"
 fi
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for perfstat_cpu in -lperfstat" >&5
@@ -3837,7 +3837,7 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_perfstat_perfstat_cpu" >&5
 $as_echo "$ac_cv_lib_perfstat_perfstat_cpu" >&6; }
 if test "x$ac_cv_lib_perfstat_perfstat_cpu" = xyes; then :
-  UV_LIBS="$UV_LIBS -lperfstat"
+  LIBS="$LIBS -lperfstat"
 fi
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for pthread_mutex_init in -lpthread" >&5
@@ -3877,7 +3877,7 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_pthread_pthread_mutex_init" >&5
 $as_echo "$ac_cv_lib_pthread_pthread_mutex_init" >&6; }
 if test "x$ac_cv_lib_pthread_pthread_mutex_init" = xyes; then :
-  UV_LIBS="$UV_LIBS -lpthread"
+  LIBS="$LIBS -lpthread"
 fi
 
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking for sendfile in -lsendfile" >&5
@@ -3917,7 +3917,7 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $ac_cv_lib_sendfile_sendfile" >&5
 $as_echo "$ac_cv_lib_sendfile_sendfile" >&6; }
 if test "x$ac_cv_lib_sendfile_sendfile" = xyes; then :
-  UV_LIBS="$UV_LIBS -lsendfile"
+  LIBS="$LIBS -lsendfile"
 fi
 
 
