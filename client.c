@@ -613,7 +613,10 @@ on_client_close_done(handle)
 {
 client_t	*cl = handle->data;
 
-	client_destroy(cl);
+	if (!cl->cl_buffer)
+		client_destroy(cl);
+	else
+		cl->cl_flags |= CL_DESTROY;
 }
 
 void

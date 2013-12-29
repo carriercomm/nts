@@ -83,6 +83,7 @@ typedef enum client_state {
 #define CL_DRAIN	0x040	/* Destroy once wrbuf is empty */
 #define	CL_SSL_ACPTING	0x080	/* SSL_accept() in progress */
 #define	CL_SSL_SHUTDN	0x100	/* SSL_shutdown() in progress */
+#define	CL_DESTROY	0x200
 
 typedef enum {
 	SSL_NEVER = 0,

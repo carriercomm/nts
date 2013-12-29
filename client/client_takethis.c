@@ -106,7 +106,7 @@ artbuf_t	*buf = cl->cl_buffer;
 	if (DEBUG(CIO))
 		client_log(LOG_DEBUG, cl, "got process reply");
 
-	if (cl->cl_flags & (CL_DEAD | CL_DRAIN)) {
+	if (cl->cl_flags & CL_DESTROY) {
 		client_destroy(cl);
 		return;
 	}
@@ -123,6 +123,7 @@ artbuf_t	*buf = cl->cl_buffer;
 	free(cl->cl_buffer->ab_msgid);
 	free(cl->cl_buffer->ab_text);
 	free(cl->cl_buffer);
+	cl->cl_buffer = NULL;
 
 	cl->cl_state = CS_WAIT_COMMAND;
 	client_unpause(cl);
