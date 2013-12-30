@@ -54,7 +54,14 @@ db_init()
 int
 db_run()
 {
-int	ret;
+int		 ret;
+uv_cpu_info_t	*cpu_infos;
+int		 ncpu;
+
+	if (ret = uv_cpu_info(&cpu_infos, &ncpu))
+		ncpu = 1;
+	else
+		uv_free_cpu_info(cpu_infos, ncpu);
 
 	if (!db_location) {
 		nts_logm(DB_fac, M_DB_NOLOC);
@@ -73,7 +80,7 @@ int	ret;
 
 	db_env->set_errcall(db_env, db_errcall);
 
-	if (ret = db_env->set_tx_max(db_env, 5 + (worker_threads * 2))) {
+	if (ret = db_env->set_tx_max(db_env, 5 + (ncpu * 2))) {
 		nts_logm(DB_fac, M_DB_MXTXNFAIL, db_strerror(ret));
 		return -1;
 	}

@@ -72,7 +72,6 @@ int		 log_incoming_connections = 1;
 char		*reader_handler;
 static char	*chroot_dir;
 uint64_t	 stats_interval = 30;
-uint64_t	 worker_threads = 0;
 uv_loop_t	*loop;
 char		 version_string[64];
 uint64_t	 client_timeout = 3600; /* 1 hour */
@@ -116,8 +115,6 @@ static config_schema_opt_t server_opts[] = {
 				config_simple_string, &chroot_dir },
 	{ "stats-interval",	OPT_TYPE_NUMBER,
 				config_simple_number, &stats_interval },
-	{ "worker-threads",	OPT_TYPE_NUMBER,
-				config_simple_number, &worker_threads },
 	{ "client-timeout",	OPT_TYPE_DURATION,
 				config_simple_duration, &client_timeout },
 	{}

@@ -72,7 +72,6 @@ extern path_list_t	 common_paths;
 extern int		 log_incoming_connections;
 extern char		*reader_handler;
 extern uint64_t		 stats_interval;
-extern uint64_t		 worker_threads;
 extern char		*reader_user, *reader_group;
 extern uv_loop_t	*loop;
 extern char		*pid_file;
