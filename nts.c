@@ -215,6 +215,8 @@ char		*s;
 				while (s = next_any(&optarg, ",")) {
 					if (strcmp(s, "cio") == 0)
 						nts_debug_flags |= DEBUG_CIO;
+					else if (strcmp(s, "ctl") == 0)
+						nts_debug_flags |= DEBUG_CTL;
 					else {
 						fprintf(stderr, "%s: unknown debug flag: %s\n",
 							argv[0], s);

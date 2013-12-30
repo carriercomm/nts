@@ -31,6 +31,11 @@ typedef struct ctl_client {
 	charq_t		*ctl_rdbuf;
 } ctl_client_t;
 
+typedef struct ctl_write_req {
+	ctl_client_t	*cw_ctl;
+	char		*cw_buf;
+} ctl_write_req_t;
+
 static void	 on_ctl_connect(uv_stream_t *, int);
 static void	 on_ctl_read(uv_stream_t *, ssize_t, uv_buf_t const *);
 static void	 on_ctl_write_done(uv_write_t *, int);
@@ -101,7 +106,11 @@ int		 err;
 
 	ctl = xcalloc(1, sizeof(*ctl));
 	ctl->ctl_stream = sock;
+	ctl->ctl_rdbuf = cq_new();
 	sock->data = ctl;
+
+	if (DEBUG(CTL))
+		nts_log("ctl: accepted %p", ctl);
 
 	uv_read_start((uv_stream_t *) sock, uv_alloc, on_ctl_read);
 }
@@ -110,13 +119,20 @@ static void
 on_ctl_write_done(wr, status)
 	uv_write_t	*wr;
 {
-ctl_client_t	*ctl = wr->data;
+ctl_write_req_t	*cwr = wr->data;
+ctl_client_t	*ctl = cwr->cw_ctl;
 
-	free(wr->bufs[0].base);
-	free(wr);
+	if (DEBUG(CTL))
+		nts_log("ctl: %p write_done status=%d",
+			ctl, status);
 
-	if (status == 0)
-		ctl_close(ctl, 0);
+	free(cwr->cw_buf);
+	free(cwr);
+
+	if (status == 0 || status == UV_ECANCELED)
+		return;
+
+	ctl_close(ctl, 0);
 }
 
 static void
@@ -128,17 +144,28 @@ on_ctl_read(stream, nread, buf)
 ctl_client_t	*ctl = stream->data;
 char		*cmd;
 
-	if (nread <= 0) {
+	if (DEBUG(CTL))
+		nts_log("ctl: %p on_ctl_read nread=%d",
+			ctl, (int) nread);
+
+	if (nread == 0) {
+		free(buf->base);
+		return;
+	}
+
+	if (nread < 0) {
 		free(buf->base);
 		ctl_close(ctl, 0);
 		return;
 	}
 
 	cq_append(ctl->ctl_rdbuf, buf->base, nread);
-	free(buf->base);
 
 	if ((cmd = cq_read_line(ctl->ctl_rdbuf)) == NULL)
 		return;
+
+	if (DEBUG(CTL))
+		nts_log("ctl: %p read [%s]", ctl, cmd);
 
 	if (strcmp(cmd, "version") == 0) {
 		ctl_printf(ctl, "OK\n%s\n", version_string);
@@ -190,20 +217,25 @@ char            *buf;
 int              len;
 uv_write_t      *wr;
 uv_buf_t         ubuf;
+ctl_write_req_t	*cw;
 
 #define PRINTF_BUFSZ    1024
 
-	buf = malloc(PRINTF_BUFSZ);
+	buf = xmalloc(PRINTF_BUFSZ);
 	len = vsnprintf(buf, PRINTF_BUFSZ, fmt, ap);
 	if ((unsigned int) len >= PRINTF_BUFSZ) {
-		buf = realloc(buf, len + 1);
+		buf = xrealloc(buf, len + 1);
 		vsnprintf(buf, len + 1, fmt, ap);
 	}
+
+	cw = xcalloc(1, sizeof(*cw));
+	cw->cw_ctl = ctl;
+	cw->cw_buf = buf;
 
 	wr = xcalloc(1, sizeof(*wr));
 
 	ubuf = uv_buf_init(buf, len);
-	wr->data = ctl;
+	wr->data = cw;
 
 	uv_write(wr, (uv_stream_t *) ctl->ctl_stream, &ubuf, 1, on_ctl_write_done);
 }
@@ -222,6 +254,10 @@ on_ctl_shutdown_done(req, status)
 	uv_shutdown_t	*req;
 {
 ctl_client_t	*ctl = req->data;
+
+	if (DEBUG(CTL))
+		nts_log("ctl: %p shutdown_done", ctl);
+
 	free(req);
 	uv_close((uv_handle_t *) ctl->ctl_stream, on_ctl_close_done);
 }
@@ -231,6 +267,10 @@ on_ctl_close_done(handle)
 	uv_handle_t	*handle;
 {
 ctl_client_t	*ctl = handle->data;
+
+	if (DEBUG(CTL))
+		nts_log("ctl: %p close_done", ctl);
+
 	free(handle);
 	cq_free(ctl->ctl_rdbuf);
 	free(ctl);
@@ -240,6 +280,10 @@ static void
 ctl_close(ctl, drain)
 	ctl_client_t	*ctl;
 {
+	if (DEBUG(CTL))
+		nts_log("ctl: %p ctl_close drain=%d",
+			ctl, drain);
+
 	if (drain) {
 	uv_shutdown_t	*req = xcalloc(1, sizeof(*req));
 		req->data = ctl;
@@ -434,8 +478,15 @@ ctl_do_filter_stats(ctl)
 	ctl_client_t	*ctl;
 {
 filter_list_entry_t	*fle;
+
+	if (!SIMPLEQ_FIRST(&filter_list)) {
+		ctl_printf(ctl, "(no filters configured)\n");
+		return;
+	}
+
 	ctl_printf(ctl, "%-22s   %12s %12s %12s\n",
 			"Filter name", "permit", "deny", "dunno");
+
 
 	SIMPLEQ_FOREACH(fle, &filter_list, fle_list) {
 	filter_t	*fi = fle->fle_filter;
@@ -450,9 +501,7 @@ ctl_do_feeder_stats(ctl)
 	ctl_client_t	*ctl;
 {
 server_t	*se;
-
-	ctl_printf(ctl, "%-20s  %3s %3s %-8s %-8s %s\n",
-			"peer", "q", "adp", "state", "mode", "addr");
+int		 donehdr = 0;
 
 	SLIST_FOREACH(se, &servers, se_list) {
 	feeder_t	*fe = se->se_feeder;
@@ -468,6 +517,12 @@ server_t	*se;
 	};
 
 		TAILQ_FOREACH(fc, &fe->fe_conns, fc_list) {
+			if (!donehdr) {
+				donehdr = 1;
+				ctl_printf(ctl, "%-20s  %3s %3s %-8s %-8s %s\n",
+					"peer", "q", "adp", "state", "mode", "addr");
+			}
+
 			ctl_printf(ctl, "%-20s  %3d %3s %-8s %-8s %s\n",
 				se->se_name, fc->fc_ncq,
 				(fc->fc_flags & FE_ADP) ? "yes" : "no",
@@ -476,6 +531,9 @@ server_t	*se;
 				fc->fc_strname);
 		}
 	}
+
+	if (!donehdr)
+		ctl_printf(ctl, "(no feeder connections)");
 }
 
 void
@@ -483,8 +541,7 @@ ctl_do_client_stats(ctl)
 	ctl_client_t	*ctl;
 {
 struct server	*se;
-
-	ctl_printf(ctl, "%-40s %-4s %s\n", "client", "ssl", "state");
+int		 donehdr = 0;
 
 	SLIST_FOREACH(se, &servers, se_list) {
 	struct client	*client;
@@ -502,12 +559,20 @@ struct server	*se;
 			else
 				strcpy(s, "-");
 
+			if (!donehdr) {
+				donehdr = 1;
+				ctl_printf(ctl, "%-40s %-4s %s\n", "client", "ssl", "state");
+			}
+
 			ctl_printf(ctl, "%-40s %-4s %s\n",
 					client->cl_strname,
 					client->cl_flags & CL_SSL ? "y" : "-",
 					s);
 		}
 	}
+
+	if (!donehdr)
+		ctl_printf(ctl, "(no incoming connections)\n");
 }
 
 static char *
@@ -548,4 +613,3 @@ struct rusage	rus;
 			(((double)ct / 1000) / upt) * 100);
 	return str;
 }
-

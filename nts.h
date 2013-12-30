@@ -284,6 +284,7 @@ typedef SIMPLEQ_HEAD(strlist, strlist_entry) strlist_t;
 #else	/* NDEBUG */
 extern int nts_debug_flags;
 #define	DEBUG_CIO	0x1
+#define	DEBUG_CTL	0x2
 
 #define	DEBUG(x)	(nts_debug_flags & (DEBUG_##x))
 #endif	/* NDEBUG */
