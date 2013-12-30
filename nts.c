@@ -129,8 +129,10 @@ usage(pname)
 	char const	*pname;
 {
 	fprintf(stderr,
-"usage: %1$s [-Vny] [-x <command>] [-c <conffile>] [-p <pidfile>]\n"
-"usage: %1$s -M <msgid>\n"
+"usage: %1$s [-n | -y] [-c <conffile>] [-p <pidfile>]\n"
+"       %1$s [-c <conffile>] -x <command> [args...]\n"
+"       %1$s -M <msgid>\n"
+"       %1$s -V\n"
 "\n"
 "    -h                 print this message\n"
 "    -V                 print version and exit\n"
@@ -139,7 +141,6 @@ usage(pname)
 "    -p <pidfile>       specify the pid file location\n"
 "    -c <conffile>      specify the configuration file\n"
 "    -y                 check spool files and exit\n"
-"\n"
 "    -M <msgid>         print detailed explanation for given message\n"
 , pname);
 }
