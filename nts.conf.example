@@ -113,6 +113,12 @@ server "nts.rt.uk.eu.org" {
 	 * Setting this to around the number of CPUs is probably reasonable.
 	 */
 	worker-threads:	2;
+
+	/*
+	 * How long to leave an idle incoming connection before closing it.
+	 * Default: 1 hour.
+	 */
+	#timeout: 1 hour;
 };
 
 /* Listen on a port on all addresses. */

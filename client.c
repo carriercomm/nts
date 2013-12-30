@@ -1,5 +1,5 @@
 /* RT/NTS -- a lightweight, high performance news transit server. */
-/* 
+/*
  * Copyright (c) 2011-2013 River Tarnell.
  *
  * Permission is granted to anyone to use this software for any purpose,
@@ -56,8 +56,13 @@ static void	 client_vlog(int sev, client_t *, char const *, va_list ap);
 static void	 client_puts(client_t *, void *, size_t);
 static void	 client_handle_io(client_t *);
 static void	 client_handle_line(client_t *, char *);
+static void	 client_mark_alive(client_t *);
 
 typedef void (*cmd_handler) (client_t *, char *, char *);
+
+static client_list_t	client_timeout_list;
+static uv_timer_t	timeout_timer;
+static void	client_handle_timeouts(uv_timer_t *, int);
 
 static struct {
 	char const	*cmd;
@@ -89,6 +94,8 @@ client_init()
 	SSL_library_init();
 #endif
 
+	SIMPLEQ_INIT(&client_timeout_list);
+
 	if (incoming_init() == -1)
 		return -1;
 
@@ -101,6 +108,8 @@ client_run()
 	if (client_listen() == -1)
 		return -1;
 
+	uv_timer_init(loop, &timeout_timer);
+	uv_timer_start(&timeout_timer, client_handle_timeouts, 10000, 10000);
 	incoming_run();
 	return 0;
 }
@@ -134,6 +143,8 @@ int			 addrlen = sizeof(addr);
 	cl->cl_listener = li;
 	cl->cl_rdbuf = cq_new();
 	stream->data = cl;
+
+	client_mark_alive(cl);
 
 	if (err = uv_tcp_nodelay(stream, 0)) {
 		nts_logm(CLIENT_fac, M_CLIENT_ACPTERR,
@@ -200,7 +211,7 @@ int			 addrlen = sizeof(addr);
 		cl->cl_server = server;
 		snprintf(strname, sizeof(strname), "%s[%s]:%s", server->se_name, host, serv);
 		cl->cl_strname = xstrdup(strname);
-	} else { 
+	} else {
 		snprintf(strname, sizeof(strname), "unknown[%s]:%s", host, serv);
 		cl->cl_strname = xstrdup(strname);
 	}
@@ -259,6 +270,8 @@ client_t	*cl = stream->data;
 		free(buf->base);
 		return;
 	}
+
+	client_mark_alive(cl);
 
 #ifdef	HAVE_OPENSSL
 	if (cl->cl_flags & CL_SSL) {
@@ -403,7 +416,7 @@ client_handle_line(cl, line)
 					buf->ab_alloc *= 2;
 					if (newsz >= buf->ab_alloc)
 						buf->ab_alloc = newsz + 1;
-					    
+
 					buf->ab_text = xrealloc(buf->ab_text,
 								buf->ab_alloc);
 				}
@@ -494,8 +507,12 @@ client_t		*cl = cwr->client;
 	}
 #endif
 
-	if (status == 0 || status == UV_ECANCELED ||
-	    (cl->cl_flags & CL_DEAD))
+	if (status == 0) {
+		client_mark_alive(cl);
+		return;
+	}
+
+	if (status == UV_ECANCELED || (cl->cl_flags & CL_DEAD))
 		return;
 
 	if (log_incoming_connections)
@@ -582,14 +599,13 @@ client_t	*cl;
 	cl = xcalloc(1, sizeof(*cl));
 	cl->cl_stream = stream;
 	cl->cl_state = CS_WAIT_COMMAND;
-	cl->cl_buffer = xcalloc(1, sizeof(*cl->cl_buffer));
 #ifdef	HAVE_OPENSSL
 	cl->cl_wrbuf = cq_new();
 #endif
 	return cl;
 }
 
-void 
+void
 on_client_shutdown_done(req, status)
 	uv_shutdown_t	*req;
 {
@@ -597,6 +613,9 @@ uv_tcp_t	*stream = (uv_tcp_t *) req->handle;
 client_t	*cl = stream->data;
 
 	free(req);
+
+	if (DEBUG(CIO))
+		client_log(LOG_DEBUG, cl, "on_client_shutdown_done");
 
 	if (status) {
 		if (log_incoming_connections)
@@ -613,6 +632,10 @@ on_client_close_done(handle)
 {
 client_t	*cl = handle->data;
 
+	if (DEBUG(CIO))
+		client_log(LOG_DEBUG, cl, "on_client_close_done cl_buffer=%p",
+			   cl->cl_buffer);
+
 	if (!cl->cl_buffer)
 		client_destroy(cl);
 	else
@@ -625,6 +648,9 @@ client_close(cl, drain)
 {
 	if (cl->cl_flags & CL_DEAD)
 		return;
+
+	if (DEBUG(CIO))
+		client_log(LOG_DEBUG, cl, "client_close drain=%d", drain);
 
 	if (drain) {
 	uv_shutdown_t	*req;
@@ -652,34 +678,38 @@ client_close(cl, drain)
 }
 
 void
-client_destroy(udata)
-	void	*udata;
+client_destroy(cl)
+	client_t	*cl;
 {
-client_t	*client = udata;
 artbuf_t	*buf;
 msglist_t	*msg;
 
-	if (client->cl_server) {
-		--client->cl_server->se_nconns;
-		SIMPLEQ_REMOVE(&client->cl_server->se_clients, client, client, cl_list);
+	if (DEBUG(CIO))
+		client_log(LOG_DEBUG, cl, "client_destroy");
+
+	if (cl->cl_server) {
+		--cl->cl_server->se_nconns;
+		SIMPLEQ_REMOVE(&cl->cl_server->se_clients, cl, client, cl_list);
 	}
 
-	if (client->cl_buffer) {
-		free(client->cl_buffer->ab_msgid);
-		free(client->cl_buffer->ab_text);
-		free(client->cl_buffer);
+	SIMPLEQ_REMOVE(&client_timeout_list, cl, client, cl_timeout_list);
+
+	if (cl->cl_buffer) {
+		free(cl->cl_buffer->ab_msgid);
+		free(cl->cl_buffer->ab_text);
+		free(cl->cl_buffer);
 	}
 
-	pending_remove_client(client);
-	free(client->cl_stream);
-	free(client->cl_username);
-	free(client->cl_strname);
-	cq_free(client->cl_rdbuf);
+	pending_remove_client(cl);
+	free(cl->cl_stream);
+	free(cl->cl_username);
+	free(cl->cl_strname);
+	cq_free(cl->cl_rdbuf);
 #ifdef	HAVE_OPENSSL
-	cq_free(client->cl_wrbuf);
-	SSL_free(client->cl_ssl);
+	cq_free(cl->cl_wrbuf);
+	SSL_free(cl->cl_ssl);
 #endif
-	free(client);
+	free(cl);
 }
 
 void
@@ -705,4 +735,38 @@ client_unpause(cl)
 	if (cq_len(cl->cl_rdbuf))
 		client_handle_io(cl);
 	uv_read_start((uv_stream_t *) cl->cl_stream, uv_alloc, on_client_read);
+}
+
+static void
+client_mark_alive(cl)
+	client_t	*cl;
+{
+	if (cl->cl_lastalive)
+		SIMPLEQ_REMOVE(&client_timeout_list, cl, client, cl_timeout_list);
+	SIMPLEQ_INSERT_TAIL(&client_timeout_list, cl, cl_timeout_list);
+	cl->cl_lastalive = uv_now(loop);
+}
+
+static void
+client_handle_timeouts(ev, status)
+	uv_timer_t	*ev;
+{
+uint64_t	 now = uv_now(loop),
+		 oldest = now - (client_timeout * 1000);
+client_t	*cl;
+
+	SIMPLEQ_FOREACH(cl, &client_timeout_list, cl_timeout_list) {
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, "check timeout "
+				   "now=%d oldest=%d last_alive=%d client_timeout=%d",
+				   (int) now, (int) oldest, (int) cl->cl_lastalive,
+				   (int) client_timeout);
+		if (cl->cl_lastalive >= oldest)
+			break;
+
+		if (DEBUG(CIO))
+			client_log(LOG_DEBUG, cl, "timeout");
+
+		client_close(cl, 1);
+	}
 }

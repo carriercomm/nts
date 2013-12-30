@@ -77,6 +77,7 @@ extern char		*reader_user, *reader_group;
 extern uv_loop_t	*loop;
 extern char		*pid_file;
 extern char		*control_path;
+extern uint64_t		 client_timeout;
 
 extern char		 version_string[];
 extern const char	*buildhost,

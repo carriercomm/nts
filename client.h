@@ -118,6 +118,7 @@ typedef struct client {
 	int		 cl_flags;
 	listener_t	*cl_listener;
 	artbuf_t	*cl_buffer;
+	uint64_t	 cl_lastalive;
 
 	charq_t		*cl_rdbuf;
 
@@ -129,6 +130,7 @@ typedef struct client {
 #endif
 
 	SIMPLEQ_ENTRY(client)	cl_list;
+	SIMPLEQ_ENTRY(client)	cl_timeout_list;
 } client_t;
 
 typedef SIMPLEQ_HEAD(client_list, client) client_list_t;
@@ -160,7 +162,7 @@ void	 client_accept(uv_tcp_t *, SSL_CTX *, listener_t *);
 void	 client_accept(uv_tcp_t *, listener_t *);
 #endif
 void	 client_close(client_t *, int);
-void	 client_destroy(void *);
+void	 client_destroy(client_t *);
 
 void	 pending_init(void);
 int	 pending_check(char const *msgid);
