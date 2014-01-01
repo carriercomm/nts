@@ -163,6 +163,11 @@ char		*s;
 	arc4random();
 
 	snprintf(version_string, sizeof(version_string), "RT/NTS %s ", PACKAGE_VERSION);
+	if (*buildhash) {
+		strlcat(version_string, buildhash, sizeof(version_string));
+		strlcat(version_string, " ", sizeof(version_string));
+	}
+
 	switch (*PACKAGE_VERSION) {
 	case 'R': strlcat(version_string, "(RELEASE)", sizeof(version_string)); break;
 	case 'T': strlcat(version_string, "(TEST RELEASE)", sizeof(version_string)); break;

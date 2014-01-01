@@ -81,7 +81,8 @@ extern uint64_t		 client_timeout;
 extern char		 version_string[];
 extern const char	*buildhost,
        			*builddate,
-			*builder;
+			*builder,
+			*buildhash;
 
 #ifndef HAVE_STRLCPY
 size_t strlcpy(char *, const char *, size_t);
