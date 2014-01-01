@@ -1,0 +1,61 @@
+# RT/NTS -- a lightweight, high performance news transit server.
+# 
+# Copyright (c) 2011-2013 River Tarnell.
+#
+# Permission is granted to anyone to use this software for any purpose,
+# including commercial applications, and to alter it and redistribute it
+# freely. This software is provided 'as-is', without any express or implied
+# warranty.
+
+.SUFFIXES: .c .y .l .o .d .h .M
+
+top_srcdir	= @top_srcdir@
+prefix		= @prefix@
+exec_prefix	= @exec_prefix@
+bindir		= @bindir@
+sbindir		= @sbindir@
+sysconfdir	= @sysconfdir@
+
+VPATH		= ${top_srcdir}/uv/src
+
+CC		= @CC@
+MAKEDEPEND	= @CC@ -MM
+INSTALL		= @INSTALL@
+CFLAGS		= @CFLAGS@
+LDFLAGS		= @LDFLAGS@
+CPPFLAGS	= @CPPFLAGS@ -I@top_srcdir@ -I.	-I${top_srcdir}/uv/include \
+		  -DSYSCONFDIR=\"@sysconfdir@\"
+LIBS		= @LIBS@
+
+SRCS		= async.c core.c dl.c fs.c getaddrinfo.c loop.c			\
+		  loop-watcher.c pipe.c poll.c process.c signal.c stream.c	\
+		  tcp.c thread.c threadpool.c timer.c tty.c udp.c uv-common.c	\
+		  version.c fs-poll.c inet.c @UV_EXTRA_SRCS@
+
+OBJS		= ${SRCS:.c=.o}
+
+all: libuv.a
+
+libuv.a: $(OBJS)
+	ar cru libuv.a ${OBJS}
+	ranlib libuv.a
+
+%.o:	%.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $<
+
+%.d:	%.c
+	$(MAKEDEPEND) $(CPPFLAGS) $< -o $@
+
+clean:
+	rm -f libuv.a $(OBJS) 
+
+depend: $(SRCS:.c=.d)
+	sed '/^# Do not remove this line -- make depend needs it/,$$ d' \
+			<Makefile >Makefile.new
+	echo '# Do not remove this line -- make depend needs it' >>Makefile.new
+	cat *.d >> Makefile.new
+	mv Makefile.new Makefile
+
+.PHONY: depend clean install
+
+# Do not remove this line -- make depend needs it
