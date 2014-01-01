@@ -223,7 +223,7 @@ int			 addrlen = sizeof(addr);
 
 	time(&now);
 	tm = localtime(&now);
-	strftime(tbuf, sizeof(tbuf), "%d-%b-%Y %H:%M:%S %Z", tm);
+	strftime(tbuf, sizeof(tbuf), "%d-%b-%Y %H:%M:%S %z", tm);
 	client_printf(cl, "200 %s %s ready at %s (%s).\r\n",
 		      pathhost, version_string, tbuf, contact_address);
 
